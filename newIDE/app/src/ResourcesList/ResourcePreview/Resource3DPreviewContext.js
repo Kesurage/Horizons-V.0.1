@@ -7,6 +7,12 @@ import {
   loadDracoDecoderFiles,
   type DracoDecoderFiles,
 } from '../../Utils/DracoDecoder';
+import {
+  getCachedResource3DPreview,
+  setCachedResource3DPreview,
+  setResource3DPreviewRequester,
+  subscribeToResource3DPreviewRendered,
+} from './Resource3DPreviewCache';
 
 type WorkerInitMessage = {|
   type: 'INIT',
@@ -215,6 +221,28 @@ type Props = {|
   children: React.Node,
 |};
 
+export const useOnResource3DPreviewRendered = (listener: () => void) => {
+  React.useEffect(() => subscribeToResource3DPreviewRendered(listener), [
+    listener,
+  ]);
+};
+
+// The resource data is fetched on the main thread. Workers in Electron cannot
+// fetch file:// URLs because webSecurity:false only applies to the renderer
+// process, not the network service process used by workers.
+const fetchModelData = async (url: string): Promise<?ArrayBuffer> => {
+  try {
+    const response = await fetch(url, {
+      credentials: checkIfCredentialsRequired(url) ? 'include' : 'same-origin',
+    });
+    if (!response.ok) throw new Error(`HTTP error ${response.status}`);
+    return await response.arrayBuffer();
+  } catch (error) {
+    console.error('Error fetching 3D model resource:', error);
+    return null;
+  }
+};
+
 export const Resource3DPreviewProvider = ({
   children,
 }: Props): React.MixedElement => {
@@ -222,7 +250,6 @@ export const Resource3DPreviewProvider = ({
   const queueRef = React.useRef<
     Array<{ url: string, resolve: (dataUrl: ?string) => void }>
   >([]);
-  const previewCache = React.useRef<{ [url: string]: string }>({});
   const workerManagerRef = React.useRef<?Resource3DPreviewWorkerManager>(null);
 
   // Initialize the worker manager on mount
@@ -232,7 +259,6 @@ export const Resource3DPreviewProvider = ({
     // Cleanup on unmount
     return () => {
       queueRef.current = [];
-      previewCache.current = {};
 
       // Terminate the worker
       if (workerManagerRef.current) {
@@ -245,8 +271,9 @@ export const Resource3DPreviewProvider = ({
   const enqueueResource = React.useCallback((url: string): Promise<?string> => {
     return new Promise(resolve => {
       // If it's already in the cache, resolve immediately.
-      if (previewCache.current[url]) {
-        resolve(previewCache.current[url]);
+      const cachedPreview = getCachedResource3DPreview(url);
+      if (cachedPreview) {
+        resolve(cachedPreview);
         return;
       }
 
@@ -261,26 +288,43 @@ export const Resource3DPreviewProvider = ({
     });
   }, []);
 
+  React.useEffect(
+    () => {
+      setResource3DPreviewRequester(enqueueResource);
+      return () => setResource3DPreviewRequester(null);
+    },
+    [enqueueResource]
+  );
+
+  // The next model of the queue is fetched while the current one is rendered.
+  const prefetchedModelRef = React.useRef<?{
+    url: string,
+    resourceDataPromise: Promise<?ArrayBuffer>,
+  }>(null);
+
   const renderModel = React.useCallback(async (url: string) => {
     const workerManager = workerManagerRef.current;
     if (!workerManager) {
-      return null;
+      return 'JsPlatform/Extensions/3d_model.svg';
     }
 
-    // Fetch the resource data on the main thread. Workers in Electron cannot
-    // fetch file:// URLs because webSecurity:false only applies to the renderer
-    // process, not the network service process used by workers.
-    let resourceData: ArrayBuffer;
-    try {
-      const response = await fetch(url, {
-        credentials: checkIfCredentialsRequired(url)
-          ? 'include'
-          : 'same-origin',
-      });
-      if (!response.ok) throw new Error(`HTTP error ${response.status}`);
-      resourceData = await response.arrayBuffer();
-    } catch (error) {
-      console.error('Error fetching 3D model resource:', error);
+    const prefetchedModel = prefetchedModelRef.current;
+    prefetchedModelRef.current = null;
+    const resourceDataPromise =
+      prefetchedModel && prefetchedModel.url === url
+        ? prefetchedModel.resourceDataPromise
+        : fetchModelData(url);
+
+    const nextItem = queueRef.current.find(item => item.url !== url);
+    if (nextItem && !getCachedResource3DPreview(nextItem.url)) {
+      prefetchedModelRef.current = {
+        url: nextItem.url,
+        resourceDataPromise: fetchModelData(nextItem.url),
+      };
+    }
+
+    const resourceData = await resourceDataPromise;
+    if (!resourceData) {
       return 'JsPlatform/Extensions/3d_model.svg';
     }
 
@@ -310,7 +354,7 @@ export const Resource3DPreviewProvider = ({
         // Handle the result
         if (dataUrl) {
           // Save it in the cache for future use
-          previewCache.current[currentResource] = dataUrl;
+          setCachedResource3DPreview(currentResource, dataUrl);
 
           // Resolve all the requests made for that URL
           const queueItemsToResolve = queueRef.current.filter(
@@ -340,10 +384,13 @@ export const Resource3DPreviewProvider = ({
     [currentResource, renderModel]
   );
 
+  const contextValue = React.useMemo(
+    () => ({ getResourcePreview: enqueueResource }),
+    [enqueueResource]
+  );
+
   return (
-    <Resource3DPreviewContext.Provider
-      value={{ getResourcePreview: enqueueResource }}
-    >
+    <Resource3DPreviewContext.Provider value={contextValue}>
       {children}
     </Resource3DPreviewContext.Provider>
   );
