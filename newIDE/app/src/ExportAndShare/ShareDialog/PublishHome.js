@@ -405,7 +405,6 @@ const PublishHome = ({
                 <Trans>Gaming portals (Itch.io, Poki, CrazyGames...)</Trans>
               }
               onClick={() => onChooseSection('browser')}
-              disabled={allExportersRequireOnline && !isOnline}
               id="publish-browser"
             />
           )}
@@ -460,7 +459,6 @@ const PublishHome = ({
               icon={getSubSectionIcon('browser', 'offline')}
               description={<Trans>Itch.io, Poki, CrazyGames...</Trans>}
               onClick={() => onChooseSubSection('offline')}
-              disabled={allExportersRequireOnline && !isOnline}
               id="publish-external-websites"
             />
           )}

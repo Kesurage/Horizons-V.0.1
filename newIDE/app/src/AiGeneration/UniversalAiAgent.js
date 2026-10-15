@@ -595,6 +595,41 @@ and give concrete, ready-to-use guidance using GDevelop terminology (objects, be
 You cannot modify the project directly in this mode — explain what the user should do, step by step.
 `;
 
+/**
+ * All engine extensions available offline (compiled into the game engine).
+ * The AI agent can use any of them (objects, behaviors, conditions, actions),
+ * like the objects/behaviors picker in the editor does.
+ */
+export const AVAILABLE_ENGINE_EXTENSIONS = `
+- 3D: objects: Cube3DObject, Model3DObject; behaviors: Base3D::Base3DBehavior
+- AnchorBehavior: behaviors: AnchorBehavior::AnchorBehavior
+- BBText: objects: BBText
+- BitmapText: objects: BitmapTextObject
+- DestroyOutsideBehavior: behaviors: DestroyOutsideBehavior::DestroyOutside
+- DraggableBehavior: behaviors: DraggableBehavior::Draggable
+- Lighting: objects: LightObject; behaviors: Lighting::LightObstacleBehavior
+- Multiplayer: behaviors: MultiplayerObjectBehavior
+- PanelSpriteObject: objects: PanelSpriteObject::PanelSprite
+- ParticleSystem: objects: ParticleSystem::ParticleEmitter
+- PathfindingBehavior: behaviors: PathfindingBehavior::PathfindingBehavior, PathfindingBehavior::PathfindingObstacleBehavior
+- Physics2Behavior: behaviors: Physics2::Physics2Behavior
+- Physics3DBehavior: behaviors: Physics3D::Physics3DBehavior, Physics3D::PhysicsCar3D, Physics3D::PhysicsCharacter3D
+- PhysicsBehavior: behaviors: PhysicsBehavior::PhysicsBehavior
+- PlatformBehavior: behaviors: PlatformBehavior::PlatformBehavior, PlatformBehavior::PlatformerObjectBehavior
+- PrimitiveDrawing: objects: PrimitiveDrawing::Drawer
+- SaveState: behaviors: SaveState::SaveConfiguration
+- Spine: objects: SpineObject
+- TextEntryObject: objects: TextEntryObject::TextEntry
+- TextInput: objects: TextInputObject
+- TextObject: objects: TextObject::Text
+- TileMap: objects: TileMap::CollisionMask, TileMap::SimpleTileMap, TileMap::TileMap
+- TiledSpriteObject: objects: TiledSpriteObject::TiledSprite
+- TopDownMovementBehavior: behaviors: TopDownMovementBehavior::TopDownMovementBehavior
+- TweenBehavior: behaviors: Tween::TweenBehavior
+- Video: objects: VideoObject
+Also always available: core objects (Sprite, TiledSprite, Text, ShapePainter, ParticlesEmitter, BBText, Video, 3D boxes/models), p2p/socketio multiplayer tools, and every behavior action/condition of the behaviors listed above.
+`;
+
 export const getUniversalAiSystemPrompt = ({
   mode,
   projectDigest,
@@ -619,6 +654,8 @@ export const getUniversalAiSystemPrompt = ({
     personaPrompt +
     '\n\n' +
     base +
+    '\n\n# AVAILABLE EXTENSIONS (usable offline, no installation needed)\n' +
+    AVAILABLE_ENGINE_EXTENSIONS +
     '\n\n# CURRENT GAME PROJECT (live context)\n' +
     projectDigest
   );

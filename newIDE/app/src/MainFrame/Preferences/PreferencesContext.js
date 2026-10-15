@@ -429,7 +429,7 @@ export const initialPreferences = {
     showBasicProfilingCounters: false,
     inAppTutorialsProgress: {},
     newProjectsDefaultFolder: ((app ? findDefaultFolder(app) : ''): string),
-    newProjectsDefaultStorageProviderName: 'Cloud',
+    newProjectsDefaultStorageProviderName: 'LocalDevice',
     useShortcutToClosePreviewWindow: true,
     watchProjectFolderFilesForLocalProjects: true,
     newFeaturesAcknowledgements: {},

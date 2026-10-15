@@ -8,6 +8,7 @@ import {
 import CloudStorageProvider from '../CloudStorageProvider';
 import UrlStorageProvider from '../UrlStorageProvider';
 import DownloadFileStorageProvider from '../DownloadFileStorageProvider';
+import LocalStorageProvider from '../LocalStorageProvider';
 import { moveUrlResourcesToCloudProject } from '../CloudStorageProvider/CloudResourceMover';
 
 const moveNothing = async () => {
@@ -45,6 +46,31 @@ const movers: {
   [`${UrlStorageProvider.internalName}=>${
     DownloadFileStorageProvider.internalName
   }`]: moveNothing,
+
+  // Moving to "LocalDevice" (projects saved in the browser/device storage):
+
+  // Projects saved on the device keep their resources as they are (public
+  // URLs or data embedded in the project), so that they can work offline.
+  // $FlowFixMe[incompatible-type]
+  [`${CloudStorageProvider.internalName}=>${
+    LocalStorageProvider.internalName
+  }`]: moveNothing,
+  // $FlowFixMe[incompatible-type]
+  [`${UrlStorageProvider.internalName}=>${
+    LocalStorageProvider.internalName
+  }`]: moveNothing,
+  // $FlowFixMe[incompatible-type]
+  [`${LocalStorageProvider.internalName}=>${
+    LocalStorageProvider.internalName
+  }`]: moveNothing,
+  // $FlowFixMe[incompatible-type]
+  [`${LocalStorageProvider.internalName}=>${
+    DownloadFileStorageProvider.internalName
+  }`]: moveNothing,
+  // $FlowFixMe[incompatible-type]
+  [`${LocalStorageProvider.internalName}=>${
+    CloudStorageProvider.internalName
+  }`]: moveUrlResourcesToCloudProject,
 };
 
 const BrowserResourceMover: ResourceMover = {

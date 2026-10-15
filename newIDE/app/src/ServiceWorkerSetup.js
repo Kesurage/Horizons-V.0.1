@@ -79,3 +79,36 @@ export function registerServiceWorker() {
     }
   });
 }
+
+/**
+ * Ask the browser to make the storage (projects saved on the device,
+ * service worker cache) persistent, i.e. not evictable automatically
+ * when the device is low on space. Especially important on Android,
+ * where browsers can otherwise wipe IndexedDB data.
+ */
+export function ensurePersistentStorage() {
+  if (
+    typeof navigator === 'undefined' ||
+    !navigator.storage ||
+    !navigator.storage.persist
+  ) {
+    return;
+  }
+  navigator.storage
+    .persisted()
+    .then(isAlreadyPersistent => {
+      if (isAlreadyPersistent) return null;
+      return navigator.storage.persist().then(isPersistent => {
+        console.info(
+          isPersistent
+            ? 'Storage marked as persistent: projects saved on the device are protected from eviction.'
+            : 'Storage persistence was not granted: projects on the device could be evicted if the device runs out of space.'
+        );
+        return null;
+      });
+    })
+    .catch(error => {
+      console.warn('Unable to request persistent storage:', error);
+    });
+}
+
