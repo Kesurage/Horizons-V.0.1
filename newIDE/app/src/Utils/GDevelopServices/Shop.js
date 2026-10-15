@@ -255,21 +255,29 @@ export const getArchivedPrivateGameTemplateListingData = ({
 export const listListedPrivateAssetPacks = async (): Promise<
   Array<PrivateAssetPackListingData>
 > => {
-  const response = await client.get('/asset-pack');
-  return ensureIsArray({
-    data: response.data,
-    endpointName: '/asset-pack of Shop API',
-  });
+  try {
+    const response = await client.get('/asset-pack', { timeout: 4000 });
+    return ensureIsArray({
+      data: response.data,
+      endpointName: '/asset-pack of Shop API',
+    });
+  } catch (e) {
+    return [];
+  }
 };
 
 export const listListedPrivateGameTemplates = async (): Promise<
   Array<PrivateGameTemplateListingData>
 > => {
-  const response = await client.get('/game-template');
-  return ensureIsArray({
-    data: response.data,
-    endpointName: '/game-template of Shop API',
-  });
+  try {
+    const response = await client.get('/game-template', { timeout: 4000 });
+    return ensureIsArray({
+      data: response.data,
+      endpointName: '/game-template of Shop API',
+    });
+  } catch (e) {
+    return [];
+  }
 };
 
 export const listListedCreditsPackages = async (): Promise<

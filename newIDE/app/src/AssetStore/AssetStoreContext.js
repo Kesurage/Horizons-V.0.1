@@ -14,6 +14,13 @@ import {
   listAllLicenses,
 } from '../Utils/GDevelopServices/Asset';
 import {
+  OFFLINE_ASSET_SHORT_HEADERS,
+  OFFLINE_ASSET_PACKS,
+  OFFLINE_FILTERS,
+  OFFLINE_AUTHORS,
+  OFFLINE_LICENSES,
+} from './OfflineAssetsCatalog';
+import {
   listListedPrivateAssetPacks,
   type PrivateAssetPackListingData,
 } from '../Utils/GDevelopServices/Shop';

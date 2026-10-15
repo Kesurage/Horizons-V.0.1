@@ -33,7 +33,7 @@ type FileToCloudProjectResourceUploaderProps = {|
 
 const resourceKindToInputAcceptedMimes = {
   audio: ['audio/aac', 'audio/x-wav', 'audio/mpeg', 'audio/mp3', 'audio/ogg'],
-  image: ['image/jpeg', 'image/png', 'image/webp'],
+  image: ['image/jpeg', 'image/png', 'image/webp', 'image/svg+xml'],
   font: ['font/ttf', 'font/otf'],
   video: ['video/mp4', 'video/webm'],
   json: ['application/json'],
@@ -42,9 +42,6 @@ const resourceKindToInputAcceptedMimes = {
   bitmapFont: [],
   model3D: [
     'file',
-    // The following mime type is not handled by Safari. The verification will be handled
-    // after the files have been picked.
-    // 'model/gltf-binary'
   ],
   atlas: [],
   spine: ['application/json'],
@@ -74,7 +71,6 @@ export const getInputAcceptedMimesAndExtensions = (
 ): string => {
   const acceptedExtensions = getAcceptedExtensions(resourceKind);
   const acceptedMimes = getAcceptedMimeTypes(resourceKind);
-
   return [...acceptedMimes, ...acceptedExtensions].join(',');
 };
 
@@ -100,44 +96,83 @@ export const FileToCloudProjectResourceUploader = ({
   ]);
   const cloudProjectId = fileMetadata ? fileMetadata.fileIdentifier : null;
   const [uploadProgress, setUploadProgress] = React.useState(0);
+
+  const isCloudUpload =
+    storageProvider.internalName === 'Cloud' &&
+    !!cloudProjectId &&
+    !!authenticatedUser.authenticated &&
+    authenticatedUser.profile?.id !== 'local-horizons-user';
+
   const onUpload = React.useCallback(
     async () => {
       const input = inputRef.current;
       if (!input) return;
-      if (!cloudProjectId) return;
+      if (selectedFiles.length === 0) return;
 
-      try {
-        setIsUploading(true);
-        setError(null);
-        setUploadProgress(0);
-        const results: UploadedProjectResourceFiles = await uploadProjectResourceFiles(
-          authenticatedUser,
-          cloudProjectId,
-          selectedFiles,
-          (current: number, total: number) => {
-            setUploadProgress((current / total) * 100);
+      if (isCloudUpload && cloudProjectId) {
+        try {
+          setIsUploading(true);
+          setError(null);
+          setUploadProgress(0);
+          const results: UploadedProjectResourceFiles = await uploadProjectResourceFiles(
+            authenticatedUser,
+            cloudProjectId,
+            selectedFiles,
+            (current: number, total: number) => {
+              setUploadProgress((current / total) * 100);
+            }
+          );
+
+          const erroredResults = results.filter(({ error }) => !!error);
+          const okResults = results.filter(({ url }) => !!url);
+          if (erroredResults.length) {
+            throw erroredResults[0];
+          } else if (okResults.length) {
+            onChooseResources(
+              okResults.map(({ url, resourceFile }) => {
+                const newResource = createNewResource();
+                newResource.setFile(url || '');
+                newResource.setName(resourceFile.name);
+                newResource.setOrigin('cloud-project-resource', url || '');
+                return newResource;
+              })
+            );
           }
-        );
-        const erroredResults = results.filter(({ error }) => !!error);
-        const okResults = results.filter(({ url }) => !!url);
-        if (erroredResults.length) {
-          throw erroredResults[0];
-        } else if (okResults.length) {
-          onChooseResources(
-            okResults.map(({ url, resourceFile }) => {
-              const newResource = createNewResource();
-              newResource.setFile(url || '');
-              newResource.setName(resourceFile.name);
-              newResource.setOrigin('cloud-project-resource', url || '');
-
-              return newResource;
+        } catch (error) {
+          setError(error);
+        } finally {
+          setIsUploading(false);
+        }
+      } else {
+        // Offline / Local Device / No Account file loading via Data URL:
+        try {
+          setIsUploading(true);
+          setError(null);
+          setUploadProgress(0);
+          const resources = await Promise.all(
+            selectedFiles.map((file, index) => {
+              return new Promise<gdResource>((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => {
+                  const dataUrl = ((reader.result: any): string);
+                  const newResource = createNewResource();
+                  newResource.setFile(dataUrl);
+                  newResource.setName(file.name);
+                  newResource.setOrigin('local-file', file.name);
+                  setUploadProgress(((index + 1) / selectedFiles.length) * 100);
+                  resolve(newResource);
+                };
+                reader.onerror = reject;
+                reader.readAsDataURL(file);
+              });
             })
           );
+          onChooseResources(resources);
+        } catch (err) {
+          setError(err);
+        } finally {
+          setIsUploading(false);
         }
-      } catch (error) {
-        setError(error);
-      } finally {
-        setIsUploading(false);
       }
     },
     [
@@ -146,6 +181,7 @@ export const FileToCloudProjectResourceUploader = ({
       onChooseResources,
       createNewResource,
       cloudProjectId,
+      isCloudUpload,
     ]
   );
 
@@ -161,11 +197,7 @@ export const FileToCloudProjectResourceUploader = ({
     })
     .filter(Boolean);
 
-  const canUploadWithThisStorageProvider =
-    storageProvider.internalName === 'Cloud' && !!fileMetadata;
-  const isConnected = !!authenticatedUser.authenticated;
-  const canChooseFiles =
-    !isUploading && isConnected && canUploadWithThisStorageProvider;
+  const canChooseFiles = !isUploading;
 
   // Automatically open the input once, at the first render, if asked.
   React.useLayoutEffect(
@@ -178,13 +210,13 @@ export const FileToCloudProjectResourceUploader = ({
     [automaticallyOpenInput]
   );
 
-  // Start uploading after choosing some files (if there are no errors and
-  // if no error happened during the last upload attempt).
+  // Start uploading/loading after choosing some files.
   const canUploadFiles =
     !isUploading &&
     canChooseFiles &&
     hasSelectedFiles &&
     invalidFiles.length === 0;
+
   React.useEffect(
     () => {
       if (canUploadFiles && !error) {
@@ -197,9 +229,6 @@ export const FileToCloudProjectResourceUploader = ({
   const shouldValidateFilePostPicking = React.useMemo(
     () => {
       const acceptedMimeTypes = getAcceptedMimeTypes(options.resourceKind);
-      // Safari does not use file extensions to filter files pre-picking and
-      // Safari also does not recognize all mime types. So if the only accepted
-      // mime type is 'file', the file validation should happen post-picking.
       return acceptedMimeTypes.length === 1 && acceptedMimeTypes[0] === 'file';
     },
     [options.resourceKind]
@@ -220,21 +249,13 @@ export const FileToCloudProjectResourceUploader = ({
 
   return (
     <ColumnStackLayout noMargin>
-      {!isConnected ? (
-        <AlertMessage kind="warning">
+      {!isCloudUpload && (
+        <AlertMessage kind="info">
           <Trans>
-            Your need to first create your account, or login, to upload your own
-            resources.
+            Local device storage: files are embedded directly in your project. No account or upload required.
           </Trans>
         </AlertMessage>
-      ) : !canUploadWithThisStorageProvider ? (
-        <AlertMessage kind="warning">
-          <Trans>
-            Your need to first save your game on GDevelop Cloud to upload your
-            own resources.
-          </Trans>
-        </AlertMessage>
-      ) : null}
+      )}
       <Paper variant="outlined" background="medium">
         <Line expand>
           <Column expand>
@@ -263,8 +284,6 @@ export const FileToCloudProjectResourceUploader = ({
                 }
                 setFilteredOutFiles(newFilteredOutFiles);
                 setSelectedFiles(files);
-
-                // Remove the previous error, if any, to let a new upload attempt be triggered.
                 setError(null);
               }}
             />
@@ -290,7 +309,6 @@ export const FileToCloudProjectResourceUploader = ({
               </Trans>
             </AlertMessage>
           );
-
         return (
           <AlertMessage kind="error">
             <Trans>The file {erroredFile.filename} is invalid.</Trans>
@@ -300,8 +318,7 @@ export const FileToCloudProjectResourceUploader = ({
       {error && (
         <AlertMessage kind="error">
           <Trans>
-            There was an error while uploading some resources. Verify your
-            internet connection or try again later.
+            There was an error while loading resources: {error.message || 'Unknown error'}
           </Trans>
         </AlertMessage>
       )}
@@ -322,3 +339,4 @@ export const FileToCloudProjectResourceUploader = ({
     </ColumnStackLayout>
   );
 };
+export default FileToCloudProjectResourceUploader;

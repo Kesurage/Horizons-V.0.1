@@ -142,6 +142,12 @@ export default class Authentication {
     });
 
     let isFirstCall = true;
+    setTimeout(() => {
+      if (isFirstCall) {
+        isFirstCall = false;
+        resolveInitialCheck();
+      }
+    }, 1200);
     onAuthStateChanged(this.auth, user => {
       if (isFirstCall) {
         // First call - Firebase has completed initial auth check

@@ -8,7 +8,12 @@ import {
 import CloudStorageProvider from '../CloudStorageProvider';
 import { moveUrlResourcesToCloudFilesIfPrivate } from '../CloudStorageProvider/CloudResourceFetcher';
 import UrlStorageProvider from '../UrlStorageProvider';
+import LocalStorageProvider from '../LocalStorageProvider';
 import { fetchRelativeResourcesToFullUrls } from '../UrlStorageProvider/UrlResourceFetcher';
+
+const fetchNothing = async () => ({
+  erroredResources: [],
+});
 
 const fetchers: {
   [string]: FetchAllProjectResourcesFunction,
@@ -21,6 +26,9 @@ const fetchers: {
   // URL. This allows to open local projects uploaded to GitHub for example.
   // $FlowFixMe[incompatible-type]
   [UrlStorageProvider.internalName]: fetchRelativeResourcesToFullUrls,
+  // Local device storage projects embed/retain resources locally, no remote fetch needed.
+  // $FlowFixMe[incompatible-type]
+  [LocalStorageProvider.internalName]: fetchNothing,
 };
 
 const BrowserResourceFetcher: ResourceFetcher = {
@@ -29,14 +37,10 @@ const BrowserResourceFetcher: ResourceFetcher = {
   ): Promise<FetchAllProjectResourcesResult> => {
     const { storageProvider } = options;
     const fetcher = fetchers[storageProvider.internalName];
-    // $FlowFixMe[constant-condition]
-    if (!fetcher)
-      throw new Error(
-        `Can't find a ResourceFetcher for ${
-          storageProvider.internalName
-        } - have you registered the storage provider here?`
-      );
-
+    if (!fetcher) {
+      // Graceful fallback for any offline/local storage provider
+      return { erroredResources: [] };
+    }
     return fetcher(options);
   },
 };

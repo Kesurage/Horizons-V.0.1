@@ -103,12 +103,32 @@ export type AuthenticatedUser = {|
   onSendEmailVerification: () => Promise<void>,
   onOpenEmailVerificationDialog: ({|
     sendEmailAutomatically: boolean,
-    showSendEmailButton: boolean,
-  |}) => void,
+    showSendEmailButton: boolean,  |}) => void,
   onAcceptGameStatsEmail: (value: boolean) => Promise<void>,
   getAuthorizationHeader: () => Promise<string>,
   achievements: ?Array<Achievement>,
 |};
+
+export const offlineDefaultProfile: any = {
+  id: 'local-horizons-user',
+  email: 'offline@horizons.local',
+  username: 'Horizons Creator',
+  description: 'Local Offline Creator',
+  appLanguage: 'en',
+  isCreator: true,
+};
+
+export const offlineDefaultLimits: any = {
+  capabilities: {
+    classrooms: { hidePremiumProducts: false },
+    ai: { availablePresets: [] },
+    builds: { canBuild: true },
+  },
+  quotas: {},
+  credits: {
+    userBalance: { amount: 999999 },
+  },
+};
 
 export const authenticatedUserPropertiesLoadingState = {
   cloudProjects: null,
@@ -121,9 +141,9 @@ export const authenticatedUserPropertiesLoadingState = {
 };
 
 export const initialAuthenticatedUser = {
-  authenticated: false,
+  authenticated: true,
   firebaseUser: null,
-  profile: null,
+  profile: offlineDefaultProfile,
   loginState: null,
   creatingOrLoggingInAccount: false,
   cloudProjectsFetchingErrorLabel: null,
@@ -136,7 +156,7 @@ export const initialAuthenticatedUser = {
   subscriptionPricingSystem: null,
   usages: null,
   userEarningsBalance: null,
-  limits: null,
+  limits: offlineDefaultLimits,
   ...authenticatedUserPropertiesLoadingState,
   authenticationError: null,
   onLogin: async () => {},
@@ -171,30 +191,27 @@ export const initialAuthenticatedUser = {
   onSendEmailVerification: async () => {},
   onOpenEmailVerificationDialog: () => {},
   onAcceptGameStatsEmail: async () => {},
-  getAuthorizationHeader: (): Promise<> =>
-    Promise.reject(new Error('Unimplemented')),
+  getAuthorizationHeader: async (): Promise<string> => '',
   achievements: null,
 };
 
 export const authenticatedUserLoggedOutAttributes = {
-  authenticated: false,
+  authenticated: true,
   firebaseUser: null,
-  profile: null,
-  // A logged out user is not the same a user being loaded (which can be the case at startup).
-  // Use this loginState to make sure this is understood by the app as a user logged out, and not loading.
+  profile: offlineDefaultProfile,
   loginState: 'done',
-  badges: null,
-  cloudProjects: ([]: Array<empty>), // Initialize to empty array to indicate that the loading is done.
+  badges: [],
+  cloudProjects: ([]: Array<empty>),
   cloudProjectsFetchingErrorLabel: null,
-  receivedAssetPacks: ([]: Array<empty>), // Initialize to empty array to indicate that the loading is done.
-  receivedAssetShortHeaders: ([]: Array<empty>), // Initialize to empty array to indicate that the loading is done.
-  receivedGameTemplates: ([]: Array<empty>), // Initialize to empty array to indicate that the loading is done.
-  receivedBundles: ([]: Array<empty>), // Initialize to empty array to indicate that the loading is done.
+  receivedAssetPacks: ([]: Array<empty>),
+  receivedAssetShortHeaders: ([]: Array<empty>),
+  receivedGameTemplates: ([]: Array<empty>),
+  receivedBundles: ([]: Array<empty>),
   subscription: null,
   subscriptionPricingSystem: null,
   userEarningsBalance: null,
   usages: null,
-  limits: null,
+  limits: offlineDefaultLimits,
 };
 
 const AuthenticatedUserContext: React.Context<AuthenticatedUser> = React.createContext<AuthenticatedUser>(

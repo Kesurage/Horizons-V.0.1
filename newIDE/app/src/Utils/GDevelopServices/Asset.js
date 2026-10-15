@@ -17,6 +17,14 @@ import {
 } from './Shop';
 import { type ExtensionDependency } from '../../Utils/GDevelopServices/Extension';
 import { ensureObjectHasProperty, ensureIsArray } from '../DataValidator';
+import {
+  OFFLINE_ASSET_SHORT_HEADERS,
+  OFFLINE_ASSET_PACKS,
+  OFFLINE_FILTERS,
+  OFFLINE_AUTHORS,
+  OFFLINE_LICENSES,
+  getOfflineFullAsset,
+} from '../../AssetStore/OfflineAssetsCatalog';
 
 export type License = {|
   name: string,
@@ -395,60 +403,90 @@ export const listAllPublicAssets = async ({
 }: {|
   environment: Environment,
 |}): Promise<AllPublicAssets> => {
-  const response = await client.get(`/asset`, {
-    params: {
-      environment,
-    },
-  });
+  try {
+    const response = await client.get(`/asset`, {
+      params: {
+        environment,
+      },
+      timeout: 5000,
+    });
 
-  const {
-    assetShortHeadersUrl,
-    filtersUrl,
-    assetPacksUrl,
-    assetCdn,
-  } = response.data;
+    const {
+      assetShortHeadersUrl,
+      filtersUrl,
+      assetPacksUrl,
+      assetCdn,
+    } = response.data;
 
-  // Overwrite the CDN from where public assets are served.
-  if (assetCdn.baseUrl) {
-    GDevelopAssetCdn.baseUrl['live'] =
-      assetCdn.baseUrl['live'] || GDevelopAssetCdn.baseUrl['live'];
-    GDevelopAssetCdn.baseUrl['staging'] =
-      assetCdn.baseUrl['staging'] || GDevelopAssetCdn.baseUrl['staging'];
+    if (assetCdn && assetCdn.baseUrl) {
+      GDevelopAssetCdn.baseUrl['live'] =
+        assetCdn.baseUrl['live'] || GDevelopAssetCdn.baseUrl['live'];
+      GDevelopAssetCdn.baseUrl['staging'] =
+        assetCdn.baseUrl['staging'] || GDevelopAssetCdn.baseUrl['staging'];
+    }
+
+    const responsesData = await Promise.all([
+      cdnClient
+        .get(assetShortHeadersUrl, { timeout: 8000 })
+        .then(response => response.data)
+        .catch(e => e),
+      cdnClient
+        .get(filtersUrl, { timeout: 8000 })
+        .then(response => response.data)
+        .catch(e => e),
+      cdnClient
+        .get(assetPacksUrl, { timeout: 8000 })
+        .then(response => response.data)
+        .catch(e => e),
+    ]);
+
+    if (!responsesData.some(data => !data || data instanceof Error)) {
+      const publicAssetShortHeaders = responsesData[0];
+      const publicFilters = responsesData[1];
+      const publicAssetPacks = responsesData[2];
+
+      if (publicAssetPacks && publicAssetPacks.starterPacks) {
+        const mergedHeaders = [
+          ...OFFLINE_ASSET_SHORT_HEADERS,
+          ...publicAssetShortHeaders,
+        ];
+        const mergedPacks = {
+          ...publicAssetPacks,
+          starterPacks: [
+            ...OFFLINE_ASSET_PACKS.starterPacks,
+            ...(publicAssetPacks.starterPacks || []),
+          ],
+        };
+        const result = {
+          publicAssetShortHeaders: mergedHeaders,
+          publicFilters,
+          publicAssetPacks: mergedPacks,
+        };
+        try {
+          if (typeof localStorage !== 'undefined') {
+            localStorage.setItem('gd-offline-asset-cache', JSON.stringify(result));
+          }
+        } catch (e) {}
+        return result;
+      }
+    }
+  } catch (err) {
+    console.info('Using offline asset catalog:', err.message);
   }
 
-  const responsesData = await Promise.all([
-    cdnClient
-      .get(assetShortHeadersUrl)
-      .then(response => response.data)
-      .catch(e => e),
-    cdnClient
-      .get(filtersUrl)
-      .then(response => response.data)
-      .catch(e => e),
-    cdnClient
-      .get(assetPacksUrl)
-      .then(response => response.data)
-      .catch(e => e),
-  ]);
-
-  if (responsesData.some(data => !data || data instanceof Error)) {
-    throw new Error('Unexpected response from the assets endpoints.');
-  }
-
-  const publicAssetShortHeaders = responsesData[0];
-  const publicFilters = responsesData[1];
-  const publicAssetPacks = responsesData[2];
-
-  if (!publicAssetPacks.starterPacks) {
-    throw new Error(
-      'Unexpected response from the public asset packs endpoint.'
-    );
-  }
+  try {
+    if (typeof localStorage !== 'undefined') {
+      const cached = localStorage.getItem('gd-offline-asset-cache');
+      if (cached) {
+        return JSON.parse(cached);
+      }
+    }
+  } catch (e) {}
 
   return {
-    publicAssetShortHeaders,
-    publicFilters,
-    publicAssetPacks,
+    publicAssetShortHeaders: OFFLINE_ASSET_SHORT_HEADERS,
+    publicFilters: OFFLINE_FILTERS,
+    publicAssetPacks: OFFLINE_ASSET_PACKS,
   };
 };
 
@@ -456,16 +494,49 @@ export const getPublicAsset = async (
   assetShortHeader: AssetShortHeader,
   { environment }: {| environment: Environment |}
 ): Promise<Asset> => {
-  const assetResponse = await cdnClient.get(
-    `${GDevelopAssetCdn.baseUrl[environment]}/assets/${
-      assetShortHeader.id
-    }.json`
-  );
-  return ensureObjectHasProperty({
-    data: assetResponse.data,
-    propertyName: 'id',
-    endpointName: '/assets/{id}.json of Asset API',
-  });
+  const offlineAsset = getOfflineFullAsset(assetShortHeader.id);
+  if (offlineAsset) {
+    return offlineAsset;
+  }
+
+  try {
+    if (typeof localStorage !== 'undefined') {
+      const cached = localStorage.getItem('gd-asset-cache-' + assetShortHeader.id);
+      if (cached) {
+        return JSON.parse(cached);
+      }
+    }
+  } catch (e) {}
+
+  try {
+    const assetResponse = await cdnClient.get(
+      `${GDevelopAssetCdn.baseUrl[environment]}/assets/${
+        assetShortHeader.id
+      }.json`,
+      { timeout: 8000 }
+    );
+    const data = ensureObjectHasProperty({
+      data: assetResponse.data,
+      propertyName: 'id',
+      endpointName: '/assets/{id}.json of Asset API',
+    });
+    try {
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem('gd-asset-cache-' + assetShortHeader.id, JSON.stringify(data));
+      }
+    } catch (e) {}
+    return data;
+  } catch (err) {
+    const fallbackAsset = getOfflineFullAsset('offline-player');
+    if (fallbackAsset) {
+      return {
+        ...fallbackAsset,
+        id: assetShortHeader.id,
+        name: assetShortHeader.name,
+      };
+    }
+    throw err;
+  }
 };
 
 export const getPrivateAsset = async (
