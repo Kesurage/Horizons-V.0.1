@@ -23,6 +23,7 @@ import {
   type AiRequest,
   type AiRequestMessage,
 } from '../Utils/GDevelopServices/Generation';
+import AiQuickSettingsDialog from './AiQuickSettingsDialog';
 import {
   getCloudProjectFileMetadataIdentifier,
   type ExpandedCloudProjectVersion,
@@ -362,6 +363,7 @@ export const AskAiEditor: React.ComponentType<Props> = React.memo<Props>(
         isReadyToProcessFunctionCalls,
         setIsReadyToProcessFunctionCalls,
       ] = React.useState<boolean>(!!continueProcessingFunctionCallsOnMount);
+      const [isAiSettingsDialogOpen, setIsAiSettingsDialogOpen] = React.useState<boolean>(false);
 
       React.useEffect(
         () => {
@@ -463,12 +465,6 @@ export const AskAiEditor: React.ComponentType<Props> = React.memo<Props>(
             if (!newAiRequestOptions) return;
             console.info('Starting a new AI request...');
 
-            if (!profile) {
-              onOpenCreateAccountDialog();
-              startNewAiRequest(null);
-              return;
-            }
-
             // Read the options and reset them (to avoid launching the same request twice).
             const {
               mode,
@@ -514,7 +510,7 @@ export const AskAiEditor: React.ComponentType<Props> = React.memo<Props>(
 
               const preparedAiUserContent = await prepareAiUserContent({
                 getAuthorizationHeader,
-                userId: profile.id,
+                userId: profile ? profile.id : 'local-user',
                 simplifiedProjectJson,
                 projectSpecificExtensionsSummaryJson,
                 eventsJson: null,
@@ -522,7 +518,7 @@ export const AskAiEditor: React.ComponentType<Props> = React.memo<Props>(
 
               const aiRequest = await createAiRequest(getAuthorizationHeader, {
                 userRequest: userRequest,
-                userId: profile.id,
+                userId: profile ? profile.id : 'local-user',
                 gameProjectJsonUserRelativeKey:
                   preparedAiUserContent.gameProjectJsonUserRelativeKey,
                 gameProjectJson: preparedAiUserContent.gameProjectJson,
@@ -627,7 +623,7 @@ export const AskAiEditor: React.ComponentType<Props> = React.memo<Props>(
           editorFunctionCallResults: Array<EditorFunctionCallResult>,
           mode?: 'chat' | 'agent' | 'orchestrator',
         |}) => {
-          if (!profile || !selectedAiRequestId || !selectedAiRequest) return;
+          if (!selectedAiRequestId || !selectedAiRequest) return;
 
           if (isSendingAiRequest(selectedAiRequestId)) {
             console.info(
@@ -745,7 +741,7 @@ export const AskAiEditor: React.ComponentType<Props> = React.memo<Props>(
 
             const aiRequest: AiRequest = await retryIfFailed({ times: 2 }, () =>
               addMessageToAiRequest(getAuthorizationHeader, {
-                userId: profile.id,
+                userId: profile ? profile.id : 'local-user',
                 aiRequestId: selectedAiRequestId,
                 functionCallOutputs,
                 gameProjectJsonUserRelativeKey:
@@ -883,15 +879,6 @@ export const AskAiEditor: React.ComponentType<Props> = React.memo<Props>(
       });
 
       React.useEffect(() => {
-        // When component is mounted, and an AI request was already selected,
-        // ensure we reset the selection if not logged in.
-        if (selectedAiRequestId) {
-          if (!profile) {
-            setSelectedAiRequestId(null);
-            return;
-          }
-        }
-
         setIsReadyToProcessFunctionCalls(true);
         // We only want this to run once on mount.
         // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -945,11 +932,12 @@ export const AskAiEditor: React.ComponentType<Props> = React.memo<Props>(
                 onStartNewChat={onStartNewChat}
                 canStartNewChat={canStartNewChat}
                 onOpenHistory={onOpenHistory}
+                onOpenAiSettings={() => setIsAiSettingsDialogOpen(true)}
               />
             );
           }
         },
-        [setToolbar, onStartNewChat, canStartNewChat, onOpenHistory]
+        [setToolbar, onStartNewChat, canStartNewChat, onOpenHistory, setIsAiSettingsDialogOpen]
       );
 
       React.useEffect(updateToolbar, [updateToolbar]);
@@ -1462,6 +1450,12 @@ export const AskAiEditor: React.ComponentType<Props> = React.memo<Props>(
             }}
             selectedAiRequestId={selectedAiRequestId}
           />
+          {isAiSettingsDialogOpen && (
+            <AiQuickSettingsDialog
+              open={isAiSettingsDialogOpen}
+              onClose={() => setIsAiSettingsDialogOpen(false)}
+            />
+          )}
         </>
       );
     }

@@ -27,6 +27,7 @@ import defaultShortcuts from '../../KeyboardShortcuts/DefaultShortcuts';
 import AlertMessage from '../../UI/AlertMessage';
 import ErrorBoundary from '../../UI/ErrorBoundary';
 import CompactSelectField from '../../UI/CompactSelectField';
+import AiProviderTab from './AiProviderTab';
 const electron = optionalRequire('electron');
 
 type Props = {|
@@ -114,6 +115,7 @@ const PreferencesDialog = ({
           onChange={setCurrentTab}
           options={[
             { value: 'preferences', label: <Trans>Preferences</Trans> },
+            { value: 'ai', label: <Trans>AI Provider</Trans> },
             { value: 'shortcuts', label: <Trans>Keyboard Shortcuts</Trans> },
             ...(electron
               ? [{ value: 'folders', label: <Trans>Folders</Trans> }]
@@ -693,6 +695,9 @@ const PreferencesDialog = ({
             </>
           )}
         </ColumnStackLayout>
+      )}
+      {currentTab === 'ai' && (
+        <AiProviderTab />
       )}
       {currentTab === 'shortcuts' && (
         <Line expand>

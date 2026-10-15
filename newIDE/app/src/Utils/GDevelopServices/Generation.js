@@ -9,6 +9,36 @@ import {
   ensureIsObject,
   ensureObjectHasProperty,
 } from '../DataValidator';
+import {
+  executeUniversalAiChat,
+  getLocalAiHistory,
+  saveLocalAiRequest,
+} from '../../AiGeneration/UniversalAiClient';
+
+const getStoredAiConfig = () => {
+  try {
+    const raw = typeof localStorage !== 'undefined' ? localStorage.getItem('gd-preferences') : null;
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && parsed.values) {
+        return {
+          baseUrl: parsed.values.aiBaseUrl || 'https://api.openai.com/v1',
+          apiKey: parsed.values.aiApiKey || '',
+          model: parsed.values.aiModel || 'gpt-4o',
+          temperature: typeof parsed.values.aiTemperature === 'number' ? parsed.values.aiTemperature : 0.7,
+          customSystemPrompt: parsed.values.aiCustomSystemPrompt || '',
+        };
+      }
+    }
+  } catch (e) {}
+  return {
+    baseUrl: 'https://api.openai.com/v1',
+    apiKey: '',
+    model: 'gpt-4o',
+    temperature: 0.7,
+    customSystemPrompt: '',
+  };
+};
 
 export type Environment = 'staging' | 'live';
 
@@ -273,6 +303,10 @@ export const getAiRequest = async (
     aiRequestId: string,
   |}
 ): Promise<AiRequest> => {
+  const localHistory = getLocalAiHistory();
+  const local = localHistory.find(r => r.id === aiRequestId);
+  if (local) return local;
+
   const authorizationHeader = await getAuthorizationHeader();
   // $FlowFixMe[underconstrained-implicit-instantiation]
   const response = await axios.get(
@@ -340,6 +374,14 @@ export const getAiRequests = async (
   aiRequests: Array<AiRequest>,
   nextPageUri: ?string,
 }> => {
+  const localHistory = getLocalAiHistory();
+  if (localHistory.length > 0) {
+    return {
+      aiRequests: localHistory,
+      nextPageUri: null,
+    };
+  }
+
   const authorizationHeader = await getAuthorizationHeader();
   const uri = forceUri || '/ai-request';
 
@@ -401,40 +443,90 @@ export const createAiRequest = async (
     toolsVersion: string,
   |}
 ): Promise<AiRequest> => {
-  const authorizationHeader = await getAuthorizationHeader();
-  const response = await apiClient.post(
-    '/ai-request',
-    {
-      gdevelopVersionWithHash: getIDEVersionWithHash(),
-      userRequest,
-      gameProjectJson,
-      gameProjectJsonUserRelativeKey,
-      projectSpecificExtensionsSummaryJson,
-      projectSpecificExtensionsSummaryJsonUserRelativeKey,
-      payWithCredits: !!payWithCredits,
-      payWithAiCredits: !payWithCredits,
-      mode,
-      aiConfiguration,
-      gameId,
-      projectVersionIdBeforeMessage,
-      fileMetadata,
-      storageProviderName,
-      toolsVersion,
-    },
-    {
-      params: {
-        userId,
+  const config = getStoredAiConfig();
+  const aiRequestId = 'airq_univ_' + Date.now();
+  const userMessageId = 'msg_usr_' + Date.now();
+  const assistantMessageId = 'msg_ast_' + (Date.now() + 1);
+
+  const userMessage: AiRequestUserMessage = {
+    type: 'message',
+    status: 'completed',
+    role: 'user',
+    content: [
+      {
+        type: 'input_text',
+        text: userRequest,
       },
-      headers: {
-        Authorization: authorizationHeader,
-      },
-    }
-  );
-  return ensureObjectHasProperty({
-    data: response.data,
-    propertyName: 'id',
-    endpointName: '/ai-request of Generation API',
-  });
+    ],
+    messageId: userMessageId,
+  };
+
+  try {
+    const { assistantText } = await executeUniversalAiChat({
+      userPrompt: userRequest,
+      conversationHistory: [userMessage],
+      config,
+    });
+
+    const assistantMessage: AiRequestAssistantMessage = {
+      type: 'message',
+      status: 'completed',
+      role: 'assistant',
+      content: [
+        {
+          type: 'output_text',
+          status: 'completed',
+          text: assistantText,
+          annotations: [],
+        },
+      ],
+      messageId: assistantMessageId,
+    };
+
+    const newAiRequest: AiRequest = {
+      id: aiRequestId,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      userId: userId || 'local-user',
+      status: 'ready',
+      mode: mode || 'chat',
+      error: null,
+      output: [userMessage, assistantMessage],
+      lastUserMessagePriceInCredits: 0,
+      totalPriceInCredits: 0,
+    };
+
+    saveLocalAiRequest(newAiRequest);
+    return newAiRequest;
+  } catch (err) {
+    const errorAssistantMessage: AiRequestAssistantMessage = {
+      type: 'message',
+      status: 'completed',
+      role: 'assistant',
+      content: [
+        {
+          type: 'output_text',
+          status: 'completed',
+          text: `⚠️ **AI Provider Error**: ${err.message}\n\nPlease check your Base URL (${config.baseUrl}) and API key in **Preferences → AI Provider** or via the AI toolbar gear icon.`,
+          annotations: [],
+        },
+      ],
+      messageId: assistantMessageId,
+    };
+
+    const errorAiRequest: AiRequest = {
+      id: aiRequestId,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      userId: userId || 'local-user',
+      status: 'ready',
+      mode: mode || 'chat',
+      error: null,
+      output: [userMessage, errorAssistantMessage],
+    };
+    saveLocalAiRequest(errorAiRequest);
+    return errorAiRequest;
+  }
 };
 
 export const addMessageToAiRequest = async (
@@ -471,39 +563,95 @@ export const addMessageToAiRequest = async (
     toolsVersion?: string,
   |}
 ): Promise<AiRequest> => {
-  const authorizationHeader = await getAuthorizationHeader();
-  const response = await apiClient.post(
-    `/ai-request/${aiRequestId}/action/add-message`,
-    {
-      gdevelopVersionWithHash: getIDEVersionWithHash(),
-      functionCallOutputs,
-      userMessage,
-      gameId,
-      projectVersionIdBeforeMessage,
-      payWithCredits: !!payWithCredits,
-      payWithAiCredits: !payWithCredits,
-      gameProjectJson,
-      gameProjectJsonUserRelativeKey,
-      projectSpecificExtensionsSummaryJson,
-      projectSpecificExtensionsSummaryJsonUserRelativeKey,
-      paused,
-      mode,
-      toolsVersion,
-    },
-    {
-      params: {
-        userId,
+  const config = getStoredAiConfig();
+  const localHistory = getLocalAiHistory();
+  let existingRequest = localHistory.find(r => r.id === aiRequestId);
+  if (!existingRequest) {
+    existingRequest = {
+      id: aiRequestId,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      userId: userId || 'local-user',
+      status: 'ready',
+      mode: mode || 'chat',
+      error: null,
+      output: [],
+    };
+  }
+
+  const userMessageId = 'msg_usr_' + Date.now();
+  const assistantMessageId = 'msg_ast_' + (Date.now() + 1);
+
+  const newUserMsg: AiRequestUserMessage = {
+    type: 'message',
+    status: 'completed',
+    role: 'user',
+    content: [
+      {
+        type: 'input_text',
+        text: userMessage,
       },
-      headers: {
-        Authorization: authorizationHeader,
-      },
-    }
-  );
-  return ensureObjectHasProperty({
-    data: response.data,
-    propertyName: 'id',
-    endpointName: '/ai-request/{id}/action/add-message of Generation API',
-  });
+    ],
+    messageId: userMessageId,
+  };
+
+  const updatedOutput = [...(existingRequest.output || []), newUserMsg];
+
+  try {
+    const { assistantText } = await executeUniversalAiChat({
+      userPrompt: userMessage,
+      conversationHistory: updatedOutput,
+      config,
+    });
+
+    const newAssistantMsg: AiRequestAssistantMessage = {
+      type: 'message',
+      status: 'completed',
+      role: 'assistant',
+      content: [
+        {
+          type: 'output_text',
+          status: 'completed',
+          text: assistantText,
+          annotations: [],
+        },
+      ],
+      messageId: assistantMessageId,
+    };
+
+    const updatedRequest: AiRequest = {
+      ...existingRequest,
+      updatedAt: new Date().toISOString(),
+      status: 'ready',
+      output: [...updatedOutput, newAssistantMsg],
+    };
+
+    saveLocalAiRequest(updatedRequest);
+    return updatedRequest;
+  } catch (err) {
+    const errorAssistantMsg: AiRequestAssistantMessage = {
+      type: 'message',
+      status: 'completed',
+      role: 'assistant',
+      content: [
+        {
+          type: 'output_text',
+          status: 'completed',
+          text: `⚠️ **AI Provider Error**: ${err.message}`,
+          annotations: [],
+        },
+      ],
+      messageId: assistantMessageId,
+    };
+    const updatedRequest: AiRequest = {
+      ...existingRequest,
+      updatedAt: new Date().toISOString(),
+      status: 'ready',
+      output: [...updatedOutput, errorAssistantMsg],
+    };
+    saveLocalAiRequest(updatedRequest);
+    return updatedRequest;
+  }
 };
 
 export const suspendAiRequest = async (

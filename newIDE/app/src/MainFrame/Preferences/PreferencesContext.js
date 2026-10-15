@@ -244,6 +244,12 @@ export type PreferencesValues = {|
   useBackgroundSerializerForSaving: boolean,
   disableNpmScriptConfirmation: boolean,
   showJsTypeError: boolean,
+  aiProviderType: string,
+  aiBaseUrl: string,
+  aiApiKey: string,
+  aiModel: string,
+  aiTemperature: number,
+  aiCustomSystemPrompt: string,
 |};
 
 /**
@@ -367,6 +373,12 @@ export type Preferences = {|
   setAutomaticallyUseCreditsForAiRequests: (enabled: boolean) => void,
   setUseBackgroundSerializerForSaving: (enabled: boolean) => void,
   setShowJsTypeError: (enabled: boolean) => void,
+  setAiProviderType: (type: string) => void,
+  setAiBaseUrl: (url: string) => void,
+  setAiApiKey: (key: string) => void,
+  setAiModel: (model: string) => void,
+  setAiTemperature: (temp: number) => void,
+  setAiCustomSystemPrompt: (prompt: string) => void,
 |};
 
 export const initialPreferences = {
@@ -432,6 +444,12 @@ export const initialPreferences = {
     useBackgroundSerializerForSaving: false,
     disableNpmScriptConfirmation: false,
     showJsTypeError: false,
+    aiProviderType: 'universal',
+    aiBaseUrl: 'https://api.openai.com/v1',
+    aiApiKey: '',
+    aiModel: 'gpt-4o',
+    aiTemperature: 0.7,
+    aiCustomSystemPrompt: '',
   },
   setMultipleValues: () => {},
   setLanguage: () => {},
@@ -518,6 +536,12 @@ export const initialPreferences = {
   setAutomaticallyUseCreditsForAiRequests: (enabled: boolean) => {},
   setUseBackgroundSerializerForSaving: (enabled: boolean) => {},
   setShowJsTypeError: (enabled: boolean) => {},
+  setAiProviderType: (type: string) => {},
+  setAiBaseUrl: (url: string) => {},
+  setAiApiKey: (key: string) => {},
+  setAiModel: (model: string) => {},
+  setAiTemperature: (temp: number) => {},
+  setAiCustomSystemPrompt: (prompt: string) => {},
 };
 
 const PreferencesContext: React.Context<Preferences> = React.createContext<Preferences>(

@@ -406,6 +406,18 @@ export default class PreferencesProvider extends React.Component<Props, State> {
     ): any),
     // $FlowFixMe[method-unbinding]
     setShowJsTypeError: (this._setShowJsTypeError.bind(this): any),
+    // $FlowFixMe[method-unbinding]
+    setAiProviderType: (this._setAiProviderType.bind(this): any),
+    // $FlowFixMe[method-unbinding]
+    setAiBaseUrl: (this._setAiBaseUrl.bind(this): any),
+    // $FlowFixMe[method-unbinding]
+    setAiApiKey: (this._setAiApiKey.bind(this): any),
+    // $FlowFixMe[method-unbinding]
+    setAiModel: (this._setAiModel.bind(this): any),
+    // $FlowFixMe[method-unbinding]
+    setAiTemperature: (this._setAiTemperature.bind(this): any),
+    // $FlowFixMe[method-unbinding]
+    setAiCustomSystemPrompt: (this._setAiCustomSystemPrompt.bind(this): any),
   };
 
   componentDidMount() {
@@ -1392,6 +1404,78 @@ export default class PreferencesProvider extends React.Component<Props, State> {
         values: {
           ...state.values,
           automaticallyUseCreditsForAiRequests: newValue,
+        },
+      }),
+      () => this._persistValuesToLocalStorage(this.state)
+    );
+  }
+
+  _setAiProviderType(newValue: string) {
+    this.setState(
+      state => ({
+        values: {
+          ...state.values,
+          aiProviderType: newValue,
+        },
+      }),
+      () => this._persistValuesToLocalStorage(this.state)
+    );
+  }
+
+  _setAiBaseUrl(newValue: string) {
+    this.setState(
+      state => ({
+        values: {
+          ...state.values,
+          aiBaseUrl: newValue,
+        },
+      }),
+      () => this._persistValuesToLocalStorage(this.state)
+    );
+  }
+
+  _setAiApiKey(newValue: string) {
+    this.setState(
+      state => ({
+        values: {
+          ...state.values,
+          aiApiKey: newValue,
+        },
+      }),
+      () => this._persistValuesToLocalStorage(this.state)
+    );
+  }
+
+  _setAiModel(newValue: string) {
+    this.setState(
+      state => ({
+        values: {
+          ...state.values,
+          aiModel: newValue,
+        },
+      }),
+      () => this._persistValuesToLocalStorage(this.state)
+    );
+  }
+
+  _setAiTemperature(newValue: number) {
+    this.setState(
+      state => ({
+        values: {
+          ...state.values,
+          aiTemperature: newValue,
+        },
+      }),
+      () => this._persistValuesToLocalStorage(this.state)
+    );
+  }
+
+  _setAiCustomSystemPrompt(newValue: string) {
+    this.setState(
+      state => ({
+        values: {
+          ...state.values,
+          aiCustomSystemPrompt: newValue,
         },
       }),
       () => this._persistValuesToLocalStorage(this.state)

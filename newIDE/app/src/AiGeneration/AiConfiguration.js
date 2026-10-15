@@ -19,34 +19,35 @@ export const getAiConfigurationPresetsWithAvailability = ({
   limits: ?Limits,
 |}): Array<AiConfigurationPresetWithAvailability> => {
   const aiSettings = getAiSettings();
-  if (!aiSettings) {
-    return [];
+  if (!aiSettings || !aiSettings.aiRequest || !aiSettings.aiRequest.presets) {
+    return [
+      {
+        id: 'universal-chat',
+        name: 'Universal AI Assistant',
+        description: 'OpenAI-compatible / local offline model',
+        mode: 'chat',
+        isDefault: true,
+        disabled: false,
+        enableWith: null,
+      },
+      {
+        id: 'universal-agent',
+        name: 'Universal Event Logic Agent',
+        description: 'Generates events and logic using configured model',
+        mode: 'agent',
+        isDefault: true,
+        disabled: false,
+        enableWith: null,
+      },
+    ];
   }
 
-  if (!limits) {
-    return aiSettings.aiRequest.presets.map(preset => ({
-      ...preset,
-      enableWith: null,
-      disabled: preset.isDefault ? false : true,
-    }));
-  }
-
-  return aiSettings.aiRequest.presets.map(preset => {
-    const presetAvailability = limits.capabilities.ai.availablePresets.find(
-      presetAvailability =>
-        presetAvailability.id === preset.id &&
-        presetAvailability.mode === preset.mode
-    );
-
-    return {
-      ...preset,
-      disabled:
-        presetAvailability && presetAvailability.disabled !== undefined
-          ? presetAvailability.disabled
-          : preset.disabled,
-      enableWith: (presetAvailability && presetAvailability.enableWith) || null,
-    };
-  });
+  // All presets are 100% unlocked for Horizons Universal AI
+  return aiSettings.aiRequest.presets.map(preset => ({
+    ...preset,
+    disabled: false,
+    enableWith: null,
+  }));
 };
 
 export const getDefaultAiConfigurationPresetId = (

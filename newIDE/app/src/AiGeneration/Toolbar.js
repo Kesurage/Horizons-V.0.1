@@ -4,6 +4,7 @@ import * as React from 'react';
 import { ToolbarGroup } from '../UI/Toolbar';
 import AddIcon from '../UI/CustomSvgIcons/Add';
 import ChatBubblesIcon from '../UI/CustomSvgIcons/ChatBubbles';
+import SettingsIcon from '../UI/CustomSvgIcons/Settings';
 import IconButton from '../UI/IconButton';
 import RaisedButton from '../UI/RaisedButton';
 
@@ -11,12 +12,14 @@ type Props = {|
   onStartNewChat: () => void,
   canStartNewChat: boolean,
   onOpenHistory: () => void,
+  onOpenAiSettings?: () => void,
 |};
 
 export const Toolbar = ({
   onStartNewChat,
   canStartNewChat,
   onOpenHistory,
+  onOpenAiSettings,
 }: Props): React.Node => {
   return (
     <>
@@ -29,6 +32,16 @@ export const Toolbar = ({
         >
           <ChatBubblesIcon />
         </IconButton>
+        {onOpenAiSettings && (
+          <IconButton
+            size="small"
+            color="default"
+            tooltip={t`AI Provider & Model Settings`}
+            onClick={onOpenAiSettings}
+          >
+            <SettingsIcon />
+          </IconButton>
+        )}
       </ToolbarGroup>
       <ToolbarGroup lastChild>
         <RaisedButton
