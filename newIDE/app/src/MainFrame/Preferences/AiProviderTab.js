@@ -204,11 +204,10 @@ export const AiProviderTab = (): React.Node => {
 
       <CompactToggleField
         labelColor="primary"
-        hideTooltip
         checked={values.aiAutoEdit !== false}
         onCheck={(autoEdit: boolean) => preferences.setAiAutoEdit(autoEdit)}
-        label={t`Autoedit — allow the AI to directly modify the project`}
-        markdownDescription={t`When ON, the AI agent can create scenes, objects, behaviors and events for you. When OFF, it behaves strictly as a text assistant and only gives safe suggestions, without touching your game.`}
+        label="Autoedit — allow the AI to directly modify the project"
+        markdownDescription="When ON, the AI agent can create scenes, objects, behaviors and events for you. When OFF, it behaves strictly as a text assistant and only gives safe suggestions, without touching your game."
       />
 
       <TextField
