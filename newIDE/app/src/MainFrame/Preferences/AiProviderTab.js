@@ -8,6 +8,7 @@ import RaisedButton from '../../UI/RaisedButton';
 import AlertMessage from '../../UI/AlertMessage';
 import { ColumnStackLayout, LineStackLayout } from '../../UI/Layout';
 import { Column, Line } from '../../UI/Grid';
+import { CompactToggleField } from '../../UI/CompactToggleField';
 import PreferencesContext from './PreferencesContext';
 import {
   AI_PRESETS,
@@ -199,6 +200,15 @@ export const AiProviderTab = (): React.Node => {
           if (!isNaN(val)) preferences.setAiTemperature(val);
         }}
         fullWidth
+      />
+
+      <CompactToggleField
+        labelColor="primary"
+        hideTooltip
+        checked={values.aiAutoEdit !== false}
+        onCheck={(autoEdit: boolean) => preferences.setAiAutoEdit(autoEdit)}
+        label={t`Autoedit — allow the AI to directly modify the project`}
+        markdownDescription={t`When ON, the AI agent can create scenes, objects, behaviors and events for you. When OFF, it behaves strictly as a text assistant and only gives safe suggestions, without touching your game.`}
       />
 
       <TextField

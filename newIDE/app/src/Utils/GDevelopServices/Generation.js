@@ -32,6 +32,7 @@ const getStoredAiConfig = () => {
           model: parsed.values.aiModel || 'gpt-4o',
           temperature: typeof parsed.values.aiTemperature === 'number' ? parsed.values.aiTemperature : 0.7,
           customSystemPrompt: parsed.values.aiCustomSystemPrompt || '',
+          autoEdit: parsed.values.aiAutoEdit !== false,
         };
       }
     }
@@ -42,6 +43,7 @@ const getStoredAiConfig = () => {
     model: 'gpt-4o',
     temperature: 0.7,
     customSystemPrompt: '',
+    autoEdit: true,
   };
 };
 
@@ -453,8 +455,14 @@ export const createAiRequest = async (
       projectSpecificExtensionsSummaryJson
     );
     const requestMode = mode || 'chat';
+    // Respect the Autoedit preference: when disabled, agent/orchestrator
+    // requests behave strictly as a text assistant (no project edits).
+    const effectiveMode =
+      requestMode !== 'chat' && config.autoEdit === false
+        ? 'chat'
+        : requestMode;
     const systemPrompt = getUniversalAiSystemPrompt({
-      mode: requestMode,
+      mode: effectiveMode,
       projectDigest,
       customSystemPrompt: config.customSystemPrompt,
     });
@@ -463,7 +471,7 @@ export const createAiRequest = async (
       config,
       systemPrompt,
       newUserPrompt: userRequest,
-      mode: requestMode,
+      mode: effectiveMode,
     });
 
     const newAiRequest: AiRequest = {
@@ -472,7 +480,7 @@ export const createAiRequest = async (
       updatedAt: new Date().toISOString(),
       userId: userId || 'local-user',
       status: 'ready',
-      mode: requestMode,
+      mode: effectiveMode,
       error: null,
       output: [userMessage, ...assistantMessages],
       lastUserMessagePriceInCredits: 0,
@@ -605,8 +613,18 @@ export const addMessageToAiRequest = async (
       gameProjectJson,
       projectSpecificExtensionsSummaryJson
     );
+    // Respect the Autoedit preference (a fresh user message in
+    // agent/orchestrator mode becomes text-only when it is disabled;
+    // pending agent function outputs still finish in agent mode).
+    const hasPendingFunctionOutputs = (functionCallOutputs || []).length > 0;
+    const effectiveMode =
+      !hasPendingFunctionOutputs &&
+      requestMode !== 'chat' &&
+      config.autoEdit === false
+        ? 'chat'
+        : requestMode;
     const systemPrompt = getUniversalAiSystemPrompt({
-      mode: requestMode,
+      mode: effectiveMode,
       projectDigest,
       customSystemPrompt: config.customSystemPrompt,
     });
@@ -616,14 +634,14 @@ export const addMessageToAiRequest = async (
       systemPrompt,
       historyGDevelopOutput: fullOutput,
       newUserPrompt: null,
-      mode: requestMode,
+      mode: effectiveMode,
     });
 
     const updatedRequest: AiRequest = {
       ...existingRequest,
       updatedAt: new Date().toISOString(),
       status: 'ready',
-      mode: requestMode,
+      mode: effectiveMode,
       output: [...fullOutput, ...assistantMessages],
     };
 

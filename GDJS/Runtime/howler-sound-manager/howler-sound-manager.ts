@@ -509,6 +509,13 @@ namespace gdjs {
     constructor(resourceLoader: gdjs.ResourceLoader) {
       this._resourceLoader = resourceLoader;
 
+      // Keep the WebAudio context running instead of suspending it after
+      // idle: avoids a noticeable resume delay on the first sound played
+      // after silence (perceived audio latency). Autoplay policies are
+      // still respected — Howler auto-unlocks audio on the first user
+      // gesture (tap/click/key), so nothing plays before user intent.
+      Howler.autoSuspend = false;
+
       gdjs.registerRuntimeScenePostEventsCallback(
         this._clearCachedSpatialPosition.bind(this)
       );

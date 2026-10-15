@@ -250,6 +250,7 @@ export type PreferencesValues = {|
   aiModel: string,
   aiTemperature: number,
   aiCustomSystemPrompt: string,
+  aiAutoEdit: boolean,
 |};
 
 /**
@@ -378,6 +379,7 @@ export type Preferences = {|
   setAiApiKey: (key: string) => void,
   setAiModel: (model: string) => void,
   setAiTemperature: (temp: number) => void,
+  setAiAutoEdit: (autoEdit: boolean) => void,
   setAiCustomSystemPrompt: (prompt: string) => void,
 |};
 
@@ -450,6 +452,7 @@ export const initialPreferences = {
     aiModel: 'gpt-4o',
     aiTemperature: 0.7,
     aiCustomSystemPrompt: '',
+    aiAutoEdit: true,
   },
   setMultipleValues: () => {},
   setLanguage: () => {},
@@ -541,6 +544,7 @@ export const initialPreferences = {
   setAiApiKey: (key: string) => {},
   setAiModel: (model: string) => {},
   setAiTemperature: (temp: number) => {},
+  setAiAutoEdit: (autoEdit: boolean) => {},
   setAiCustomSystemPrompt: (prompt: string) => {},
 };
 

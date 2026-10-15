@@ -416,6 +416,7 @@ export default class PreferencesProvider extends React.Component<Props, State> {
     setAiModel: (this._setAiModel.bind(this): any),
     // $FlowFixMe[method-unbinding]
     setAiTemperature: (this._setAiTemperature.bind(this): any),
+    setAiAutoEdit: (this._setAiAutoEdit.bind(this): any),
     // $FlowFixMe[method-unbinding]
     setAiCustomSystemPrompt: (this._setAiCustomSystemPrompt.bind(this): any),
   };
@@ -1464,6 +1465,18 @@ export default class PreferencesProvider extends React.Component<Props, State> {
         values: {
           ...state.values,
           aiTemperature: newValue,
+        },
+      }),
+      () => this._persistValuesToLocalStorage(this.state)
+    );
+  }
+
+  _setAiAutoEdit(newValue: boolean) {
+    this.setState(
+      state => ({
+        values: {
+          ...state.values,
+          aiAutoEdit: newValue,
         },
       }),
       () => this._persistValuesToLocalStorage(this.state)

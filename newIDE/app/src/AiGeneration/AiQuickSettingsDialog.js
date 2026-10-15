@@ -9,6 +9,7 @@ import TextField from '../UI/TextField';
 import AlertMessage from '../UI/AlertMessage';
 import { ColumnStackLayout, LineStackLayout } from '../UI/Layout';
 import { Column, Line } from '../UI/Grid';
+import { CompactToggleField } from '../UI/CompactToggleField';
 import PreferencesContext from '../MainFrame/Preferences/PreferencesContext';
 import {
   AI_PRESETS,
@@ -200,6 +201,15 @@ export const AiQuickSettingsDialog = ({ open, onClose }: Props): React.Node => {
           onChange={(e, text) => preferences.setAiCustomSystemPrompt(text)}
           helperMarkdownText={t`Leave empty to use the built-in Horizons AI prompt.`}
           fullWidth
+        />
+
+        <CompactToggleField
+          labelColor="primary"
+          hideTooltip
+          checked={values.aiAutoEdit !== false}
+          onCheck={(autoEdit: boolean) => preferences.setAiAutoEdit(autoEdit)}
+          label={t`Autoedit — let the AI modify the project`}
+          markdownDescription={t`When ON, the AI agent can build scenes, objects and events. When OFF, it only explains and suggests, without modifying anything.`}
         />
 
         <Line justifyContent="flex-start" noMargin>
