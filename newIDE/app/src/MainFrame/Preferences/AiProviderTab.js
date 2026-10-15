@@ -201,6 +201,16 @@ export const AiProviderTab = (): React.Node => {
         fullWidth
       />
 
+      <TextField
+        floatingLabelText={<Trans>Custom System Prompt (optional)</Trans>}
+        multiline
+        rows={4}
+        value={values.aiCustomSystemPrompt || ''}
+        onChange={(e, text) => preferences.setAiCustomSystemPrompt(text)}
+        helperMarkdownText={t`Overrides the default Horizons AI personality. Leave empty to use the built-in prompt (recommended: it includes your project context and GDevelop instructions).`}
+        fullWidth
+      />
+
       <Line justifyContent="flex-start" noMargin>
         <RaisedButton
           primary

@@ -28,7 +28,7 @@ import {
   getCloudProjectFileMetadataIdentifier,
   type ExpandedCloudProjectVersion,
 } from '../Utils/GDevelopServices/Project';
-import { delay } from '../Utils/Delay';
+
 import AuthenticatedUserContext from '../Profile/AuthenticatedUserContext';
 import { Toolbar } from './Toolbar';
 import { AskAiHistory } from './AskAiHistory';
@@ -63,7 +63,6 @@ import {
 } from '../Utils/Analytics/EventSender';
 import { listAllExamples } from '../Utils/GDevelopServices/Example';
 import UrlStorageProvider from '../ProjectsStorage/UrlStorageProvider';
-import { prepareAiUserContent } from './PrepareAiUserContent';
 import { AiRequestContext } from './AiRequestContext';
 import { getAiConfigurationPresetsWithAvailability } from './AiConfiguration';
 import {
@@ -473,21 +472,9 @@ export const AskAiEditor: React.ComponentType<Props> = React.memo<Props>(
             } = newAiRequestOptions;
             startNewAiRequest(null);
 
-            // Ensure the user has enough credits to pay for the request, or ask them
-            // to buy some more.
-            let payWithCredits = false;
-            if (quota && quota.limitReached && aiRequestPriceInCredits) {
-              payWithCredits = true;
-              const doesNotHaveEnoughCreditsToContinue =
-                availableCredits < aiRequestPriceInCredits;
-              const cannotContinue =
-                !automaticallyUseCreditsForAiRequests ||
-                doesNotHaveEnoughCreditsToContinue;
-
-              if (cannotContinue) {
-                return;
-              }
-            }
+            // Offline custom AI: no credits, no quota — everything runs on
+            // the user's own AI provider.
+            const payWithCredits = false;
 
             // Request is now ready to be started.
             try {
@@ -508,24 +495,13 @@ export const AskAiEditor: React.ComponentType<Props> = React.memo<Props>(
               setSendingAiRequest(null, true);
               setIsSendingUserMessage(true);
 
-              const preparedAiUserContent = await prepareAiUserContent({
-                getAuthorizationHeader,
-                userId: profile ? profile.id : 'local-user',
-                simplifiedProjectJson,
-                projectSpecificExtensionsSummaryJson,
-                eventsJson: null,
-              });
-
               const aiRequest = await createAiRequest(getAuthorizationHeader, {
                 userRequest: userRequest,
                 userId: profile ? profile.id : 'local-user',
-                gameProjectJsonUserRelativeKey:
-                  preparedAiUserContent.gameProjectJsonUserRelativeKey,
-                gameProjectJson: preparedAiUserContent.gameProjectJson,
-                projectSpecificExtensionsSummaryJsonUserRelativeKey:
-                  preparedAiUserContent.projectSpecificExtensionsSummaryJsonUserRelativeKey,
-                projectSpecificExtensionsSummaryJson:
-                  preparedAiUserContent.projectSpecificExtensionsSummaryJson,
+                gameProjectJsonUserRelativeKey: null,
+                gameProjectJson: simplifiedProjectJson,
+                projectSpecificExtensionsSummaryJsonUserRelativeKey: null,
+                projectSpecificExtensionsSummaryJson,
                 payWithCredits,
                 gameId: project ? project.getProjectUuid() : null,
                 // $FlowFixMe[incompatible-type]
@@ -577,11 +553,6 @@ export const AskAiEditor: React.ComponentType<Props> = React.memo<Props>(
               setLastSendError(null, error);
               setIsSendingUserMessage(false);
             }
-
-            // Refresh the user limits, to ensure quota and credits information
-            // is up-to-date after an AI request.
-            await delay(500);
-            await refreshLimits({ withRetry: true });
           })();
         },
         [
@@ -665,25 +636,8 @@ export const AskAiEditor: React.ComponentType<Props> = React.memo<Props>(
           // If nothing to send, stop there.
           if (functionCallOutputs.length === 0 && !userMessage) return;
 
-          // Paying with credits is only when a user message is sent (and quota is exhausted).
-          let payWithCredits = false;
-          if (
-            userMessage &&
-            quota &&
-            quota.limitReached &&
-            aiRequestPriceInCredits
-          ) {
-            payWithCredits = true;
-            const doesNotHaveEnoughCreditsToContinue =
-              availableCredits < aiRequestPriceInCredits;
-            const cannotContinue =
-              !automaticallyUseCreditsForAiRequests ||
-              doesNotHaveEnoughCreditsToContinue;
-
-            if (cannotContinue) {
-              return;
-            }
-          }
+          // Offline custom AI: no credits or quota involved.
+          const payWithCredits = false;
 
           try {
             setSendingAiRequest(selectedAiRequestId, true);
@@ -707,14 +661,6 @@ export const AskAiEditor: React.ComponentType<Props> = React.memo<Props>(
                   )
                 )
               : null;
-
-            const preparedAiUserContent = await prepareAiUserContent({
-              getAuthorizationHeader,
-              userId: profile.id,
-              simplifiedProjectJson,
-              projectSpecificExtensionsSummaryJson,
-              eventsJson: null,
-            });
 
             // If we're updating the request, following a function call to initialize the project,
             // pause the request, so that suggestions can be given by the agent.
@@ -744,13 +690,10 @@ export const AskAiEditor: React.ComponentType<Props> = React.memo<Props>(
                 userId: profile ? profile.id : 'local-user',
                 aiRequestId: selectedAiRequestId,
                 functionCallOutputs,
-                gameProjectJsonUserRelativeKey:
-                  preparedAiUserContent.gameProjectJsonUserRelativeKey,
-                gameProjectJson: preparedAiUserContent.gameProjectJson,
-                projectSpecificExtensionsSummaryJsonUserRelativeKey:
-                  preparedAiUserContent.projectSpecificExtensionsSummaryJsonUserRelativeKey,
-                projectSpecificExtensionsSummaryJson:
-                  preparedAiUserContent.projectSpecificExtensionsSummaryJson,
+                gameProjectJsonUserRelativeKey: null,
+                gameProjectJson: simplifiedProjectJson,
+                projectSpecificExtensionsSummaryJsonUserRelativeKey: null,
+                projectSpecificExtensionsSummaryJson,
                 gameId: upToDateProject
                   ? upToDateProject.getProjectUuid()
                   : undefined,
@@ -802,11 +745,6 @@ export const AskAiEditor: React.ComponentType<Props> = React.memo<Props>(
               aiRequestChatRefCurrent.resetUserInput(selectedAiRequestId);
             }
           }
-
-          // Refresh the user limits, to ensure quota and credits information
-          // is up-to-date after an AI request.
-          await delay(500);
-          await refreshLimits({ withRetry: true });
 
           if (
             selectedAiRequest &&

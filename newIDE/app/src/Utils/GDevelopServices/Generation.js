@@ -14,6 +14,11 @@ import {
   getLocalAiHistory,
   saveLocalAiRequest,
 } from '../../AiGeneration/UniversalAiClient';
+import {
+  runUniversalAiTurn,
+  buildProjectDigest,
+  getUniversalAiSystemPrompt,
+} from '../../AiGeneration/UniversalAiAgent';
 
 const getStoredAiConfig = () => {
   try {
@@ -374,33 +379,12 @@ export const getAiRequests = async (
   aiRequests: Array<AiRequest>,
   nextPageUri: ?string,
 }> => {
+  // Offline-first: AI request history is always stored locally
+  // (the GDevelop cloud AI has been removed in favor of custom providers).
   const localHistory = getLocalAiHistory();
-  if (localHistory.length > 0) {
-    return {
-      aiRequests: localHistory,
-      nextPageUri: null,
-    };
-  }
-
-  const authorizationHeader = await getAuthorizationHeader();
-  const uri = forceUri || '/ai-request';
-
-  // $FlowFixMe[incompatible-type]
-  const response = await apiClient.get(uri, {
-    headers: {
-      Authorization: authorizationHeader,
-    },
-    params: forceUri ? { userId } : { userId, perPage: 10 },
-  });
-  const nextPageUri = response.headers.link
-    ? extractNextPageUriFromLinkHeader(response.headers.link)
-    : null;
   return {
-    aiRequests: ensureIsArray({
-      data: response.data,
-      endpointName: '/ai-request of Generation API',
-    }),
-    nextPageUri,
+    aiRequests: localHistory,
+    nextPageUri: null,
   };
 };
 
@@ -462,26 +446,25 @@ export const createAiRequest = async (
   };
 
   try {
-    const { assistantText } = await executeUniversalAiChat({
-      userPrompt: userRequest,
-      conversationHistory: [userMessage],
-      config,
+    // Give the custom model full understanding of the project structure
+    // (scenes, objects, behaviors, variables, extensions) via a compact digest.
+    const projectDigest = buildProjectDigest(
+      gameProjectJson,
+      projectSpecificExtensionsSummaryJson
+    );
+    const requestMode = mode || 'chat';
+    const systemPrompt = getUniversalAiSystemPrompt({
+      mode: requestMode,
+      projectDigest,
+      customSystemPrompt: config.customSystemPrompt,
     });
 
-    const assistantMessage: AiRequestAssistantMessage = {
-      type: 'message',
-      status: 'completed',
-      role: 'assistant',
-      content: [
-        {
-          type: 'output_text',
-          status: 'completed',
-          text: assistantText,
-          annotations: [],
-        },
-      ],
-      messageId: assistantMessageId,
-    };
+    const { messages: assistantMessages } = await runUniversalAiTurn({
+      config,
+      systemPrompt,
+      newUserPrompt: userRequest,
+      mode: requestMode,
+    });
 
     const newAiRequest: AiRequest = {
       id: aiRequestId,
@@ -489,9 +472,9 @@ export const createAiRequest = async (
       updatedAt: new Date().toISOString(),
       userId: userId || 'local-user',
       status: 'ready',
-      mode: mode || 'chat',
+      mode: requestMode,
       error: null,
-      output: [userMessage, assistantMessage],
+      output: [userMessage, ...assistantMessages],
       lastUserMessagePriceInCredits: 0,
       totalPriceInCredits: 0,
     };
@@ -582,6 +565,8 @@ export const addMessageToAiRequest = async (
   const userMessageId = 'msg_usr_' + Date.now();
   const assistantMessageId = 'msg_ast_' + (Date.now() + 1);
 
+  const requestMode = mode || existingRequest.mode || 'chat';
+
   const newUserMsg: AiRequestUserMessage = {
     type: 'message',
     status: 'completed',
@@ -595,35 +580,51 @@ export const addMessageToAiRequest = async (
     messageId: userMessageId,
   };
 
-  const updatedOutput = [...(existingRequest.output || []), newUserMsg];
+  // Keep the user message only when there is one (function call outputs can
+  // be sent alone, after the agent ran some editor functions).
+  const updatedOutput = [
+    ...(existingRequest.output || []),
+    ...(userMessage ? [newUserMsg] : []),
+  ];
+
+  // Append the editor function call outputs so that:
+  // 1. The chat UI displays what the functions did in the project.
+  // 2. The custom model sees the results of its previous tool calls and
+  //    can continue the agentic loop.
+  const functionCallOutputMessages = (functionCallOutputs || []).map(
+    output => ({
+      type: 'function_call_output',
+      call_id: output.call_id,
+      output: output.output,
+    })
+  );
+  const fullOutput = [...updatedOutput, ...functionCallOutputMessages];
 
   try {
-    const { assistantText } = await executeUniversalAiChat({
-      userPrompt: userMessage,
-      conversationHistory: updatedOutput,
-      config,
+    const projectDigest = buildProjectDigest(
+      gameProjectJson,
+      projectSpecificExtensionsSummaryJson
+    );
+    const systemPrompt = getUniversalAiSystemPrompt({
+      mode: requestMode,
+      projectDigest,
+      customSystemPrompt: config.customSystemPrompt,
     });
 
-    const newAssistantMsg: AiRequestAssistantMessage = {
-      type: 'message',
-      status: 'completed',
-      role: 'assistant',
-      content: [
-        {
-          type: 'output_text',
-          status: 'completed',
-          text: assistantText,
-          annotations: [],
-        },
-      ],
-      messageId: assistantMessageId,
-    };
+    const { messages: assistantMessages } = await runUniversalAiTurn({
+      config,
+      systemPrompt,
+      historyGDevelopOutput: fullOutput,
+      newUserPrompt: null,
+      mode: requestMode,
+    });
 
     const updatedRequest: AiRequest = {
       ...existingRequest,
       updatedAt: new Date().toISOString(),
       status: 'ready',
-      output: [...updatedOutput, newAssistantMsg],
+      mode: requestMode,
+      output: [...fullOutput, ...assistantMessages],
     };
 
     saveLocalAiRequest(updatedRequest);
@@ -658,17 +659,22 @@ export const suspendAiRequest = async (
   getAuthorizationHeader: () => Promise<string>,
   { userId, aiRequestId }: {| userId: string, aiRequestId: string |}
 ): Promise<AiRequest> => {
-  const authorizationHeader = await getAuthorizationHeader();
-  const response = await apiClient.post(
-    `/ai-request/${aiRequestId}/action/suspend`,
-    {},
-    { params: { userId }, headers: { Authorization: authorizationHeader } }
+  // Offline: there is no cloud request to suspend. Return a local, already
+  // "suspended" placeholder so callers can continue working.
+  const localHistory = getLocalAiHistory();
+  const existingRequest = localHistory.find(r => r.id === aiRequestId);
+  return (
+    existingRequest || {
+      id: aiRequestId,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      userId: userId || 'local-user',
+      status: 'suspended',
+      mode: 'chat',
+      error: null,
+      output: [],
+    }
   );
-  return ensureObjectHasProperty({
-    data: response.data,
-    propertyName: 'id',
-    endpointName: '/ai-request/{id}/action/suspend of Generation API',
-  });
 };
 
 export const updateAiRequestMessage = async (
@@ -687,22 +693,8 @@ export const updateAiRequestMessage = async (
     projectVersionIdAfterMessage?: ?string,
   |}
 ): Promise<void> => {
-  const authorizationHeader = await getAuthorizationHeader();
-  await apiClient.patch(
-    `/ai-request/${aiRequestId}/message/${aiRequestMessageId}`,
-    {
-      projectVersionIdBeforeMessage,
-      projectVersionIdAfterMessage,
-    },
-    {
-      params: {
-        userId,
-      },
-      headers: {
-        Authorization: authorizationHeader,
-      },
-    }
-  );
+  // Offline: messages live in localStorage only — nothing to update in a cloud.
+  await Promise.resolve();
 };
 
 export const sendAiRequestFeedback = async (
@@ -769,31 +761,22 @@ export const getAiRequestSuggestions = async (
     projectSpecificExtensionsSummaryJsonUserRelativeKey: string | null,
   |}
 ): Promise<AiRequest> => {
-  const authorizationHeader = await getAuthorizationHeader();
-  const response = await apiClient.post(
-    `/ai-request/${aiRequestId}/action/get-suggestions`,
-    {
-      suggestionsType,
-      gdevelopVersionWithHash: getIDEVersionWithHash(),
-      gameProjectJson,
-      gameProjectJsonUserRelativeKey,
-      projectSpecificExtensionsSummaryJson,
-      projectSpecificExtensionsSummaryJsonUserRelativeKey,
-    },
-    {
-      params: {
-        userId,
-      },
-      headers: {
-        Authorization: authorizationHeader,
-      },
+  // Offline: suggestions from the GDevelop cloud are disabled. Return the
+  // local request untouched (no suggestions) so the UI stays consistent.
+  const localHistory = getLocalAiHistory();
+  const existingRequest = localHistory.find(r => r.id === aiRequestId);
+  return (
+    existingRequest || {
+      id: aiRequestId,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      userId: userId || 'local-user',
+      status: 'ready',
+      mode: 'chat',
+      error: null,
+      output: [],
     }
   );
-  return ensureObjectHasProperty({
-    data: response.data,
-    propertyName: 'id',
-    endpointName: '/ai-request/{id}/action/get-suggestions of Generation API',
-  });
 };
 
 export type CreateAiGeneratedEventResult =

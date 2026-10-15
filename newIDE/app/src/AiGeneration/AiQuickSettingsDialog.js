@@ -192,6 +192,16 @@ export const AiQuickSettingsDialog = ({ open, onClose }: Props): React.Node => {
           </Line>
         )}
 
+        <TextField
+          floatingLabelText={<Trans>Custom System Prompt (optional)</Trans>}
+          multiline
+          rows={3}
+          value={values.aiCustomSystemPrompt || ''}
+          onChange={(e, text) => preferences.setAiCustomSystemPrompt(text)}
+          helperMarkdownText={t`Leave empty to use the built-in Horizons AI prompt.`}
+          fullWidth
+        />
+
         <Line justifyContent="flex-start" noMargin>
           <RaisedButton
             primary

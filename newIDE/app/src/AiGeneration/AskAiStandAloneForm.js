@@ -32,7 +32,7 @@ import { type ResourceManagementProps } from '../ResourcesList/ResourceSource';
 import { sendAiRequestStarted } from '../Utils/Analytics/EventSender';
 import { listAllExamples } from '../Utils/GDevelopServices/Example';
 import UrlStorageProvider from '../ProjectsStorage/UrlStorageProvider';
-import { prepareAiUserContent } from './PrepareAiUserContent';
+
 import { AiRequestContext } from './AiRequestContext';
 import { getAiConfigurationPresetsWithAvailability } from './AiConfiguration';
 import { type CreateProjectResult } from '../Utils/UseCreateProject';
@@ -250,21 +250,9 @@ export const AskAiStandAloneForm = ({
         const { userRequest, aiConfigurationPresetId } = newAiRequestOptions;
         startNewAiRequest(null);
 
-        // Ensure the user has enough credits to pay for the request, or ask them
-        // to buy some more.
-        let payWithCredits = false;
-        if (quota && quota.limitReached && aiRequestPriceInCredits) {
-          payWithCredits = true;
-          const doesNotHaveEnoughCreditsToContinue =
-            availableCredits < aiRequestPriceInCredits;
-          const cannotContinue =
-            !automaticallyUseCreditsForAiRequests ||
-            doesNotHaveEnoughCreditsToContinue;
-
-          if (cannotContinue) {
-            return;
-          }
-        }
+        // Offline custom AI: no credits, no quota — everything runs on the
+        // user's own AI provider.
+        const payWithCredits = false;
 
         // Request is now ready to be started.
         try {
@@ -275,24 +263,14 @@ export const AskAiStandAloneForm = ({
           setSendingAiRequest(null, true);
           setIsSendingUserMessage(true);
 
-          const preparedAiUserContent = await prepareAiUserContent({
-            getAuthorizationHeader,
-            userId: profile.id,
-            simplifiedProjectJson: null,
-            projectSpecificExtensionsSummaryJson: null,
-            eventsJson: null,
-          });
-
+          // Offline custom AI: no cloud upload of the project content.
           const aiRequest = await createAiRequest(getAuthorizationHeader, {
             userRequest: userRequest,
             userId: profile.id,
-            gameProjectJsonUserRelativeKey:
-              preparedAiUserContent.gameProjectJsonUserRelativeKey,
-            gameProjectJson: preparedAiUserContent.gameProjectJson,
-            projectSpecificExtensionsSummaryJsonUserRelativeKey:
-              preparedAiUserContent.projectSpecificExtensionsSummaryJsonUserRelativeKey,
-            projectSpecificExtensionsSummaryJson:
-              preparedAiUserContent.projectSpecificExtensionsSummaryJson,
+            gameProjectJsonUserRelativeKey: null,
+            gameProjectJson: null,
+            projectSpecificExtensionsSummaryJsonUserRelativeKey: null,
+            projectSpecificExtensionsSummaryJson: null,
             payWithCredits,
             gameId: null, // No game associated when starting from the standalone form.
             fileMetadata: null, // No file metadata when starting from the standalone form.
@@ -331,11 +309,6 @@ export const AskAiStandAloneForm = ({
           setLastSendError(null, error);
           setIsSendingUserMessage(false);
         }
-
-        // Refresh the user limits, to ensure quota and credits information
-        // is up-to-date after an AI request.
-        await delay(500);
-        await refreshLimits({ withRetry: true });
       })();
     },
     [
@@ -428,26 +401,16 @@ export const AskAiStandAloneForm = ({
             )
           : null;
 
-        const preparedAiUserContent = await prepareAiUserContent({
-          getAuthorizationHeader,
-          userId: profile.id,
-          simplifiedProjectJson,
-          projectSpecificExtensionsSummaryJson,
-          eventsJson: null,
-        });
 
         const aiRequest: AiRequest = await retryIfFailed({ times: 2 }, () =>
           addMessageToAiRequest(getAuthorizationHeader, {
             userId: profile.id,
             aiRequestId: aiRequestIdForForm,
             functionCallOutputs,
-            gameProjectJsonUserRelativeKey:
-              preparedAiUserContent.gameProjectJsonUserRelativeKey,
-            gameProjectJson: preparedAiUserContent.gameProjectJson,
-            projectSpecificExtensionsSummaryJsonUserRelativeKey:
-              preparedAiUserContent.projectSpecificExtensionsSummaryJsonUserRelativeKey,
-            projectSpecificExtensionsSummaryJson:
-              preparedAiUserContent.projectSpecificExtensionsSummaryJson,
+            gameProjectJsonUserRelativeKey: null,
+            gameProjectJson: simplifiedProjectJson,
+            projectSpecificExtensionsSummaryJsonUserRelativeKey: null,
+            projectSpecificExtensionsSummaryJson,
             gameId: upToDateProject
               ? upToDateProject.getProjectUuid()
               : undefined,
@@ -479,10 +442,8 @@ export const AskAiStandAloneForm = ({
         setAiRequestIdForForm('');
       }
 
-      // Refresh the user limits, to ensure quota and credits information
-      // is up-to-date after an AI request.
+      // Offline custom AI: no cloud limits to refresh after an AI request.
       await delay(500);
-      await refreshLimits({ withRetry: true });
     },
     [
       profile,

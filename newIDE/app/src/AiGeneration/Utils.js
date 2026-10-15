@@ -38,7 +38,7 @@ import { AiRequestContext } from './AiRequestContext';
 import { delay } from '../Utils/Delay';
 import { retryIfFailed } from '../Utils/RetryIfFailed';
 import { makeSimplifiedProjectBuilder } from '../EditorFunctions/SimplifiedProject/SimplifiedProject';
-import { prepareAiUserContent } from './PrepareAiUserContent';
+
 import { extractGDevelopApiErrorStatusAndCode } from '../Utils/GDevelopServices/Errors';
 import UnsavedChangesContext from '../MainFrame/UnsavedChangesContext';
 import {
@@ -481,13 +481,13 @@ export const useAiRequestState = ({
               )
             )
           : null;
-        const preparedAiUserContent = await prepareAiUserContent({
-          getAuthorizationHeader,
-          userId: profile.id,
-          simplifiedProjectJson,
+        // Offline custom AI: no cloud upload of the project content.
+        const preparedAiUserContent = {
+          gameProjectJsonUserRelativeKey: null,
+          gameProjectJson: simplifiedProjectJson,
+          projectSpecificExtensionsSummaryJsonUserRelativeKey: null,
           projectSpecificExtensionsSummaryJson,
-          eventsJson: null,
-        });
+        };
 
         try {
           // The request will switch from "ready" to "working" while suggestions are generated.

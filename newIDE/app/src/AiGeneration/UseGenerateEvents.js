@@ -1,41 +1,58 @@
 // @flow
 import * as React from 'react';
-import AuthenticatedUserContext from '../Profile/AuthenticatedUserContext';
-import { retryIfFailed } from '../Utils/RetryIfFailed';
-import { delay } from '../Utils/Delay';
-import {
-  getAiGeneratedEvent,
-  createAiGeneratedEvent,
-} from '../Utils/GDevelopServices/Generation';
-
-import { type EventsGenerationResult } from '../EditorFunctions';
 import { makeSimplifiedProjectBuilder } from '../EditorFunctions/SimplifiedProject/SimplifiedProject';
-import { prepareAiUserContent } from './PrepareAiUserContent';
+import {
+  executeUniversalAiChat,
+} from './UniversalAiClient';
+import {
+  buildProjectDigest,
+  getUniversalAiSystemPrompt,
+  EVENTS_JSON_GUIDE,
+  EVENTS_OPERATIONS_GUIDE,
+} from './UniversalAiAgent';
+import {
+  type EventsGenerationResult,
+} from '../EditorFunctions';
+import type { AiGeneratedEvent } from '../Utils/GDevelopServices/Generation';
 
 const gd: libGDevelop = global.gd;
 
-type _UseGenerateEventsReturnType = {
-  generateEvents: ({
-    eventsDescription: string,
-    existingEventsAsText: string,
-    existingEventsJson: string | null,
-    extensionNamesList: string,
-    objectsList: string,
-    placementHint: string,
-    relatedAiRequestId: string,
-    sceneName: string,
-    estimatedComplexity: number | null,
-  }) => Promise<EventsGenerationResult>,
+/**
+ * Extract the first JSON object found in a string (models sometimes wrap
+ * JSON in markdown fences or add prose around it).
+ */
+const extractJson = (text: string): ?Object => {
+  if (!text) return null;
+  const cleaned = text
+    .replace(/```json/gi, '```')
+    .split('```')
+    .map(part => part.trim())
+    .filter(Boolean);
+  const candidates = [text, ...cleaned];
+  for (const candidate of candidates) {
+    const start = candidate.indexOf('{');
+    const end = candidate.lastIndexOf('}');
+    if (start !== -1 && end > start) {
+      try {
+        return JSON.parse(candidate.slice(start, end + 1));
+      } catch (e) {
+        // Try next candidate.
+      }
+    }
+  }
+  return null;
 };
+
+/**
+ * Offline events generation: compiles a natural-language description of game
+ * logic into GDevelop events JSON using the user's custom AI provider
+ * (no GDevelop cloud involved).
+ */
 export const useGenerateEvents = ({
   project,
 }: {|
   project: ?gdProject,
-|}): _UseGenerateEventsReturnType => {
-  const { profile, getAuthorizationHeader } = React.useContext(
-    AuthenticatedUserContext
-  );
-
+|}): {| generateEvents: any |} => {
   const generateEvents = React.useCallback(
     async ({
       sceneName,
@@ -43,9 +60,7 @@ export const useGenerateEvents = ({
       extensionNamesList,
       objectsList,
       existingEventsAsText,
-      existingEventsJson,
       placementHint,
-      relatedAiRequestId,
       estimatedComplexity,
     }: {|
       sceneName: string,
@@ -59,7 +74,6 @@ export const useGenerateEvents = ({
       estimatedComplexity: number | null,
     |}): Promise<EventsGenerationResult> => {
       if (!project) throw new Error('No project is opened.');
-      if (!profile) throw new Error('User should be authenticated.');
 
       const simplifiedProjectBuilder = makeSimplifiedProjectBuilder(gd);
       const simplifiedProjectJson = JSON.stringify(
@@ -70,92 +84,138 @@ export const useGenerateEvents = ({
       );
 
       try {
-        const preparedAiUserContent = await prepareAiUserContent({
-          getAuthorizationHeader,
-          userId: profile.id,
+        const projectDigest = buildProjectDigest(
           simplifiedProjectJson,
-          projectSpecificExtensionsSummaryJson,
-          eventsJson: existingEventsJson,
-        });
-
-        const createResult = await retryIfFailed(
-          { times: 3, backoff: { initialDelay: 200, factor: 2 } },
-          () =>
-            createAiGeneratedEvent(getAuthorizationHeader, {
-              userId: profile.id,
-              gameProjectJsonUserRelativeKey:
-                preparedAiUserContent.gameProjectJsonUserRelativeKey,
-              gameProjectJson: preparedAiUserContent.gameProjectJson,
-              projectSpecificExtensionsSummaryJsonUserRelativeKey:
-                preparedAiUserContent.projectSpecificExtensionsSummaryJsonUserRelativeKey,
-              projectSpecificExtensionsSummaryJson:
-                preparedAiUserContent.projectSpecificExtensionsSummaryJson,
-              existingEventsJsonUserRelativeKey:
-                preparedAiUserContent.eventsJsonUserRelativeKey,
-              existingEventsJson: preparedAiUserContent.eventsJson,
-              sceneName,
-              eventsDescription,
-              extensionNamesList,
-              objectsList,
-              existingEventsAsText,
-              placementHint,
-              relatedAiRequestId,
-              estimatedComplexity,
-            })
+          projectSpecificExtensionsSummaryJson
         );
 
-        if (!createResult.creationSucceeded) {
-          return {
-            generationCompleted: false,
-            errorMessage: createResult.errorMessage,
-          };
-        }
+        const compilerPrompt = [
+          'Compile the following game logic request into GDevelop serialized events JSON operations.',
+          '',
+          `Target scene: "${sceneName}"`,
+          `Objects concerned: ${objectsList || '(all scene objects)'}`,
+          `Extensions available: ${extensionNamesList || '(builtin instructions)'}`,
+          placementHint ? `Placement hint: ${placementHint}` : '',
+          '',
+          '# REQUESTED LOGIC',
+          eventsDescription,
+          '',
+          existingEventsAsText
+            ? '# EXISTING EVENTS IN THE SCENE (as readable text)\n' +
+              existingEventsAsText.slice(0, 8000)
+            : '# The scene has no events yet (or none relevant). Use "insert_at_end".',
+          '',
+          EVENTS_JSON_GUIDE,
+          EVENTS_OPERATIONS_GUIDE,
+        ]
+          .filter(Boolean)
+          .join('\n');
 
-        let remainingAttempts = 50;
-        let aiGeneratedEvent = createResult.aiGeneratedEvent;
-        while (aiGeneratedEvent.status === 'working') {
-          remainingAttempts--;
-          await delay(1000);
-
-          try {
-            aiGeneratedEvent = await getAiGeneratedEvent(
-              getAuthorizationHeader,
-              {
-                userId: profile.id,
-                aiGeneratedEventId: aiGeneratedEvent.id,
+        // Chat-style call on purpose: the strict JSON contract is enforced by
+        // the prompt itself, not by tool calling.
+        const config = {
+          baseUrl: (() => {
+            try {
+              const raw = localStorage.getItem('gd-preferences');
+              if (raw) {
+                const parsed = JSON.parse(raw);
+                return (
+                  (parsed.values && parsed.values.aiBaseUrl) ||
+                  'https://api.openai.com/v1'
+                );
               }
-            );
-          } catch (error) {
-            console.warn(
-              'Error while checking status of AI generated event - continuing...',
-              error
-            );
-          }
-          if (remainingAttempts <= 0) {
-            return {
-              generationCompleted: false,
-              errorMessage:
-                'Event generation started but failed to complete in time.',
-            };
-          }
-        }
+            } catch (e) {}
+            return 'https://api.openai.com/v1';
+          })(),
+          apiKey: (() => {
+            try {
+              const raw = localStorage.getItem('gd-preferences');
+              if (raw) {
+                const parsed = JSON.parse(raw);
+                return (parsed.values && parsed.values.aiApiKey) || '';
+              }
+            } catch (e) {}
+            return '';
+          })(),
+          model: (() => {
+            try {
+              const raw = localStorage.getItem('gd-preferences');
+              if (raw) {
+                const parsed = JSON.parse(raw);
+                return (parsed.values && parsed.values.aiModel) || 'gpt-4o';
+              }
+            } catch (e) {}
+            return 'gpt-4o';
+          })(),
+          temperature: 0.2,
+          customSystemPrompt: getUniversalAiSystemPrompt({
+            mode: 'chat',
+            projectDigest,
+          }),
+        };
 
-        if (aiGeneratedEvent.status === 'suspended') {
+        const { assistantText } = await executeUniversalAiChat({
+          userPrompt: compilerPrompt,
+          conversationHistory: [],
+          config,
+        });
+
+        const parsedResult = extractJson(assistantText);
+        if (
+          !parsedResult ||
+          !Array.isArray(parsedResult.changes) ||
+          parsedResult.changes.length === 0
+        ) {
           return {
-            generationAborted: true,
+            generationCompleted: true,
+            aiGeneratedEvent: ({
+              id: 'aige_univ_' + Date.now(),
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+              status: 'ready',
+              error: null,
+              resultMessage:
+                'The model did not return valid events JSON. ' +
+                'Ask it to be more precise, or try a different model: some models follow the events JSON format better than others.',
+              changes: [],
+            }: any),
           };
         }
+
+        const aiGeneratedEvent: AiGeneratedEvent = ({
+          id: 'aige_univ_' + Date.now(),
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          status: 'ready',
+          error: null,
+          resultMessage: parsedResult.resultMessage || null,
+          changes: parsedResult.changes.map(change => ({
+            operationName: change.operationName || 'insert_at_end',
+            operationTargetEvent: change.operationTargetEvent || null,
+            isEventsJsonValid: change.generatedEvents
+              ? typeof change.generatedEvents === 'string'
+              : null,
+            generatedEvents: change.generatedEvents || null,
+            areEventsValid: null,
+            extensionNames: change.extensionNames || null,
+            diagnosticLines: [],
+            undeclaredVariables: [],
+            undeclaredObjectVariables: {},
+            missingObjectBehaviors: {},
+            missingResources: [],
+          })),
+        }: any);
 
         return { generationCompleted: true, aiGeneratedEvent };
       } catch (error) {
-        console.error('Error while launching events generation:', error);
+        console.error('Error while generating events locally:', error);
         return {
           generationCompleted: false,
           errorMessage: error.message,
         };
       }
     },
-    [getAuthorizationHeader, project, profile]
+    [project]
   );
 
   return { generateEvents };
