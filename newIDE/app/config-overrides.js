@@ -21,6 +21,37 @@ module.exports = {
       (plugin) => !(plugin instanceof ModuleScopePlugin)
     );
 
+    // Low-memory build mode (e.g. CI containers with ~4GB RAM):
+    // skip type checking, source maps and parallel minification so that
+    // the production build fits in memory.
+    if (process.env.LOW_MEMORY) {
+      config.plugins = config.plugins.filter(
+        (plugin) =>
+          !plugin ||
+          !plugin.constructor ||
+          plugin.constructor.name !== 'ForkTsCheckerWebpackPlugin'
+      );
+      config.optimization = config.optimization || {};
+      if (Array.isArray(config.optimization.minimizer)) {
+        config.optimization.minimizer = config.optimization.minimizer.map(
+          (plugin) => {
+            if (
+              plugin &&
+              plugin.constructor &&
+              (plugin.constructor.name === 'TerserPlugin' ||
+                plugin.constructor.name === 'ESLintPlugin')
+            ) {
+              if (plugin.constructor.name === 'TerserPlugin') {
+                plugin.options.parallel = false;
+              }
+            }
+            return plugin;
+          }
+        );
+      }
+      config.devtool = false;
+    }
+
     return config;
   },
 
