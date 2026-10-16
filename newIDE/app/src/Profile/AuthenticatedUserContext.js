@@ -103,7 +103,8 @@ export type AuthenticatedUser = {|
   onSendEmailVerification: () => Promise<void>,
   onOpenEmailVerificationDialog: ({|
     sendEmailAutomatically: boolean,
-    showSendEmailButton: boolean,  |}) => void,
+    showSendEmailButton: boolean,
+  |}) => void,
   onAcceptGameStatsEmail: (value: boolean) => Promise<void>,
   getAuthorizationHeader: () => Promise<string>,
   achievements: ?Array<Achievement>,
@@ -120,13 +121,55 @@ export const offlineDefaultProfile: any = {
 
 export const offlineDefaultLimits: any = {
   capabilities: {
-    classrooms: { hidePremiumProducts: false },
+    // Complete Capabilities shape (see Usage.js) so no component crashes
+    // reading a subtree that would be missing from these offline defaults.
+    analytics: {
+      sessions: false,
+      players: false,
+      retention: false,
+      sessionsTimeStats: false,
+      platforms: false,
+    },
+    cloudProjects: {
+      maximumCount: 0, // Guarded with `> 0` before use: 0 acts as unlimited.
+      canMaximumCountBeIncreased: false,
+      maximumGuestCollaboratorsPerProject: 0,
+    },
+    leaderboards: {
+      maximumCountPerGame: 0,
+      canMaximumCountPerGameBeIncreased: false,
+      themeCustomizationCapabilities: 'NONE',
+      canUseCustomCss: false,
+      canDisableLoginInLeaderboard: false,
+    },
+    multiplayer: {
+      lobbiesCount: 0,
+      maxPlayersPerLobby: 2,
+      themeCustomizationCapabilities: 'NONE',
+    },
+    versionHistory: {
+      enabled: false, // Cloud version history needs GDevelop servers.
+      retentionDays: 0,
+    },
+    privateTutorials: {
+      allowedIdPrefixes: [],
+    },
+    classrooms: {
+      hideAskAi: false,
+      hideAnnouncements: false,
+      hidePlayTab: false,
+      hideSocials: false,
+      hidePremiumProducts: false,
+      hideUpgradeNotice: false,
+      showClassroomTab: false,
+    },
     ai: { availablePresets: [] },
     builds: { canBuild: true },
   },
   quotas: {},
   credits: {
     userBalance: { amount: 999999 },
+    prices: {},
   },
 };
 

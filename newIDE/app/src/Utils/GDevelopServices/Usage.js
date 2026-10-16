@@ -732,7 +732,9 @@ export const shouldHideClassroomTab = (limits: ?Limits): boolean =>
     : true;
 
 export const getCloudProjectHistoryRetentionDays = (limits: ?Limits): number =>
-  limits && limits.capabilities.versionHistory.enabled
+  limits &&
+  limits.capabilities.versionHistory &&
+  limits.capabilities.versionHistory.enabled
     ? limits.capabilities.versionHistory.retentionDays
     : 0;
 export const getAiVersionHistoryRetentionDays = (limits: ?Limits): number =>
