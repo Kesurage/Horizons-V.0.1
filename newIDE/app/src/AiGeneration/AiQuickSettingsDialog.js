@@ -35,7 +35,9 @@ export const AiQuickSettingsDialog = ({ open, onClose }: Props): React.Node => {
   |}>(null);
   const [showApiKey, setShowApiKey] = React.useState(false);
   const [fetchingModels, setFetchingModels] = React.useState(false);
-  const [availableModels, setAvailableModels] = React.useState<Array<string>>([]);
+  const [availableModels, setAvailableModels] = React.useState<Array<string>>(
+    []
+  );
 
   if (!open) return null;
 
@@ -111,7 +113,8 @@ export const AiQuickSettingsDialog = ({ open, onClose }: Props): React.Node => {
       <ColumnStackLayout noMargin>
         <Text size="body-small">
           <Trans>
-            Quickly switch your AI model, endpoint, or API key. All calls go directly from your browser.
+            Quickly switch your AI model, endpoint, or API key. All calls go
+            directly from your browser.
           </Trans>
         </Text>
 
@@ -139,8 +142,10 @@ export const AiQuickSettingsDialog = ({ open, onClose }: Props): React.Node => {
 
         <TextField
           floatingLabelText={<Trans>API Base URL</Trans>}
-          value={values.aiBaseUrl || 'https://api.openai.com/v1'}
-          onChange={(e, text) => preferences.setAiBaseUrl(text)}
+          value={values.aiBaseUrl || ''}
+          placeholder="https://api.openai.com/v1"
+          onChange={(e, text) => preferences.setAiBaseUrl(text.trim())}
+          helperMarkdownText={t`Free text — any OpenAI-compatible base URL. Can always be edited or cleared (empty = OpenAI default).`}
           fullWidth
         />
 
@@ -165,13 +170,21 @@ export const AiQuickSettingsDialog = ({ open, onClose }: Props): React.Node => {
           <Column expand noMargin>
             <TextField
               floatingLabelText={<Trans>Model Name</Trans>}
-              value={values.aiModel || 'gpt-4o'}
-              onChange={(e, text) => preferences.setAiModel(text)}
+              value={values.aiModel || ''}
+              placeholder="gpt-4o"
+              onChange={(e, text) => preferences.setAiModel(text.trim())}
+              helperMarkdownText={t`Free text — any model ID (e.g. gpt-4o, glm-4.6, gemini-2.5-flash). Empty = gpt-4o.`}
               fullWidth
             />
           </Column>
           <FlatButton
-            label={fetchingModels ? <Trans>Loading...</Trans> : <Trans>Discover</Trans>}
+            label={
+              fetchingModels ? (
+                <Trans>Loading...</Trans>
+              ) : (
+                <Trans>Discover</Trans>
+              )
+            }
             icon={<RefreshIcon />}
             disabled={fetchingModels}
             onClick={handleFetchModels}
@@ -214,7 +227,13 @@ export const AiQuickSettingsDialog = ({ open, onClose }: Props): React.Node => {
         <Line justifyContent="flex-start" noMargin>
           <RaisedButton
             primary
-            label={testing ? <Trans>Testing...</Trans> : <Trans>Test Connection</Trans>}
+            label={
+              testing ? (
+                <Trans>Testing...</Trans>
+              ) : (
+                <Trans>Test Connection</Trans>
+              )
+            }
             icon={<CheckCircleIcon />}
             disabled={testing}
             onClick={handleTestConnection}

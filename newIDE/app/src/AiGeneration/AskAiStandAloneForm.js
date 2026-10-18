@@ -401,7 +401,6 @@ export const AskAiStandAloneForm = ({
             )
           : null;
 
-
         const aiRequest: AiRequest = await retryIfFailed({ times: 2 }, () =>
           addMessageToAiRequest(getAuthorizationHeader, {
             userId: profile.id,

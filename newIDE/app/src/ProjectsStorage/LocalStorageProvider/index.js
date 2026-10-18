@@ -10,9 +10,7 @@ import {
 import { type FileMetadata } from '../index';
 import { type SaveProjectOptions } from '../index';
 import Smartphone from '../../UI/CustomSvgIcons/Smartphone';
-import {
-  serializeToJSON,
-} from '../../Utils/Serializer';
+import { serializeToJSON } from '../../Utils/Serializer';
 import { serializeToJSONInBackground } from '../../Utils/BackgroundSerializer';
 import {
   type LocalProjectRecord,
@@ -43,9 +41,7 @@ const serializeProject = async (project: gdProject): Promise<string> => {
   return serializeToJSON(project);
 };
 
-const saveRecordToMetadata = (
-  record: LocalProjectRecord
-): FileMetadata => ({
+const saveRecordToMetadata = (record: LocalProjectRecord): FileMetadata => ({
   fileIdentifier: record.id,
   name: record.name,
   lastModifiedDate: record.lastModifiedDate,
@@ -153,13 +149,11 @@ export default ({
         },
       };
     },
-    onChooseSaveProjectAsLocation: (
-      options: {|
-        project: gdProject,
-        fileMetadata: ?FileMetadata,
-        displayOptionToGenerateNewProjectUuid: boolean,
-      |}
-    ) => {
+    onChooseSaveProjectAsLocation: (options: {|
+      project: gdProject,
+      fileMetadata: ?FileMetadata,
+      displayOptionToGenerateNewProjectUuid: boolean,
+    |}) => {
       const { project } = options;
       return new Promise(resolve => {
         setDialog(() => (

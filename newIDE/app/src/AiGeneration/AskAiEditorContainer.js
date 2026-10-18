@@ -362,7 +362,10 @@ export const AskAiEditor: React.ComponentType<Props> = React.memo<Props>(
         isReadyToProcessFunctionCalls,
         setIsReadyToProcessFunctionCalls,
       ] = React.useState<boolean>(!!continueProcessingFunctionCallsOnMount);
-      const [isAiSettingsDialogOpen, setIsAiSettingsDialogOpen] = React.useState<boolean>(false);
+      const [
+        isAiSettingsDialogOpen,
+        setIsAiSettingsDialogOpen,
+      ] = React.useState<boolean>(false);
 
       React.useEffect(
         () => {
@@ -875,7 +878,13 @@ export const AskAiEditor: React.ComponentType<Props> = React.memo<Props>(
             );
           }
         },
-        [setToolbar, onStartNewChat, canStartNewChat, onOpenHistory, setIsAiSettingsDialogOpen]
+        [
+          setToolbar,
+          onStartNewChat,
+          canStartNewChat,
+          onOpenHistory,
+          setIsAiSettingsDialogOpen,
+        ]
       );
 
       React.useEffect(updateToolbar, [updateToolbar]);

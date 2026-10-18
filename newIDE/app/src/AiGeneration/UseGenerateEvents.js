@@ -1,18 +1,14 @@
 // @flow
 import * as React from 'react';
 import { makeSimplifiedProjectBuilder } from '../EditorFunctions/SimplifiedProject/SimplifiedProject';
-import {
-  executeUniversalAiChat,
-} from './UniversalAiClient';
+import { executeUniversalAiChat } from './UniversalAiClient';
 import {
   buildProjectDigest,
   getUniversalAiSystemPrompt,
   EVENTS_JSON_GUIDE,
   EVENTS_OPERATIONS_GUIDE,
 } from './UniversalAiAgent';
-import {
-  type EventsGenerationResult,
-} from '../EditorFunctions';
+import { type EventsGenerationResult } from '../EditorFunctions';
 import type { AiGeneratedEvent } from '../Utils/GDevelopServices/Generation';
 
 const gd: libGDevelop = global.gd;
@@ -94,7 +90,8 @@ export const useGenerateEvents = ({
           '',
           `Target scene: "${sceneName}"`,
           `Objects concerned: ${objectsList || '(all scene objects)'}`,
-          `Extensions available: ${extensionNamesList || '(builtin instructions)'}`,
+          `Extensions available: ${extensionNamesList ||
+            '(builtin instructions)'}`,
           placementHint ? `Placement hint: ${placementHint}` : '',
           '',
           '# REQUESTED LOGIC',

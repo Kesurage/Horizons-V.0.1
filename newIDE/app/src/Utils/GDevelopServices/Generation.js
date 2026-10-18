@@ -22,7 +22,10 @@ import {
 
 const getStoredAiConfig = () => {
   try {
-    const raw = typeof localStorage !== 'undefined' ? localStorage.getItem('gd-preferences') : null;
+    const raw =
+      typeof localStorage !== 'undefined'
+        ? localStorage.getItem('gd-preferences')
+        : null;
     if (raw) {
       const parsed = JSON.parse(raw);
       if (parsed && parsed.values) {
@@ -30,7 +33,10 @@ const getStoredAiConfig = () => {
           baseUrl: parsed.values.aiBaseUrl || 'https://api.openai.com/v1',
           apiKey: parsed.values.aiApiKey || '',
           model: parsed.values.aiModel || 'gpt-4o',
-          temperature: typeof parsed.values.aiTemperature === 'number' ? parsed.values.aiTemperature : 0.7,
+          temperature:
+            typeof parsed.values.aiTemperature === 'number'
+              ? parsed.values.aiTemperature
+              : 0.7,
           customSystemPrompt: parsed.values.aiCustomSystemPrompt || '',
           autoEdit: parsed.values.aiAutoEdit !== false,
         };
@@ -498,7 +504,10 @@ export const createAiRequest = async (
         {
           type: 'output_text',
           status: 'completed',
-          text: `⚠️ **AI Provider Error**: ${err.message}\n\nPlease check your Base URL (${config.baseUrl}) and API key in **Preferences → AI Provider** or via the AI toolbar gear icon.`,
+          text: `⚠️ **AI Provider Error**: ${describeAiError(
+            err,
+            config.baseUrl
+          )}\n\nFix it in **Preferences → AI Provider** or via the AI toolbar gear icon: check the Base URL, API key and model name (use "Test Connection" to verify instantly).`,
           annotations: [],
         },
       ],

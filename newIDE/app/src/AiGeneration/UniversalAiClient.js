@@ -23,12 +23,21 @@ When giving event logic, format it clearly:
 - Actions: What happens when conditions are met
 Provide concise, accurate, and ready-to-use game development instructions.`;
 
-export const AI_PRESETS: { [key: string]: { label: string, baseUrl: string, model: string, description: string, requiresKey: boolean } } = {
+export const AI_PRESETS: {
+  [key: string]: {
+    label: string,
+    baseUrl: string,
+    model: string,
+    description: string,
+    requiresKey: boolean,
+  },
+} = {
   ollama: {
     label: 'Ollama (Local Offline)',
     baseUrl: 'http://localhost:11434/v1',
     model: 'llama3.2:latest',
-    description: 'Runs 100% locally on your computer with zero internet required.',
+    description:
+      'Runs 100% locally on your computer with zero internet required.',
     requiresKey: false,
   },
   lmstudio: {
@@ -71,13 +80,89 @@ export const AI_PRESETS: { [key: string]: { label: string, baseUrl: string, mode
 /**
  * Clean up base URL to ensure no trailing slash.
  */
+export const DEFAULT_AI_BASE_URL = 'https://api.openai.com/v1';
+
+/**
+ * Normalize any user-typed base URL into a clean OpenAI-compatible base:
+ * - trims whitespace and trailing slashes
+ * - if the user typed just an origin (https://api.example.com), append /v1
+ * - if the user already pasted the full /chat/completions path, strip it
+ *   (the /chat/completions suffix is appended by the callers)
+ * Everything else (…/v1, …/v4, …/v1beta/openai, …/api/paas/v4, …/api/v1) is kept as-is.
+ */
 export const sanitizeBaseUrl = (rawUrl: ?string): string => {
-  if (!rawUrl) return 'https://api.openai.com/v1';
+  if (!rawUrl || !rawUrl.trim()) return DEFAULT_AI_BASE_URL;
   let url = rawUrl.trim();
   while (url.endsWith('/')) {
     url = url.slice(0, -1);
   }
+  if (url.endsWith('/chat/completions')) {
+    url = url.slice(0, -'/chat/completions'.length);
+  }
+  try {
+    // Origin-only URLs (no path) get /v1 appended, following the most
+    // common OpenAI-compatible convention.
+    const parsed = new URL(url);
+    if (parsed.pathname === '' || parsed.pathname === '/') {
+      url = `${url}/v1`;
+    }
+  } catch (ignored) {
+    // Invalid URL: return as-is, the request will fail with a clear error.
+  }
   return url;
+};
+
+export const getChatCompletionsUrl = (rawUrl: ?string): string =>
+  `${sanitizeBaseUrl(rawUrl)}/chat/completions`;
+
+/**
+ * Turn any request error into a human-readable, actionable message
+ * (extracts the provider's own error message when available).
+ */
+export const describeAiError = (error: any, baseUrl: string): string => {
+  const response = error && error.response;
+  if (response) {
+    const status = response.status;
+    const providerMessage =
+      response.data && response.data.error && response.data.error.message
+        ? response.data.error.message
+        : response.data && typeof response.data.message === 'string'
+        ? response.data.message
+        : null;
+    if (status === 401 || status === 403) {
+      return `The provider rejected the API key (HTTP ${status}).${
+        providerMessage ? ` Provider says: "${providerMessage}"` : ''
+      } Check the API key for ${baseUrl}.`;
+    }
+    if (status === 404) {
+      return `Endpoint or model not found (HTTP 404).${
+        providerMessage ? ` Provider says: "${providerMessage}"` : ''
+      } Check the Base URL (${baseUrl}) and the model name — try "Discover Models".`;
+    }
+    if (status === 429) {
+      return `Rate limit or quota reached on the provider (HTTP 429).${
+        providerMessage ? ` Provider says: "${providerMessage}"` : ''
+      } Wait a moment or check your plan/billing.`;
+    }
+    if (status >= 500) {
+      return `The provider had a server error (HTTP ${status}).${
+        providerMessage ? ` Provider says: "${providerMessage}"` : ''
+      } This is on the provider side, try again.`;
+    }
+    return `The provider returned HTTP ${status}.${
+      providerMessage ? ` Provider says: "${providerMessage}"` : ''
+    }`;
+  }
+  if (error && error.code === 'ECONNABORTED') {
+    return `The request timed out. ${baseUrl} did not answer in time — check the endpoint is running.`;
+  }
+  if (error && error.message && error.message.includes('Network Error')) {
+    if (baseUrl.includes('localhost') || baseUrl.includes('127.0.0.1')) {
+      return `Could not reach ${baseUrl}. Start the local server (e.g. 'ollama serve') and allow browser requests (OLLAMA_ORIGINS="*").`;
+    }
+    return `Network/CORS error: the browser could not call ${baseUrl} directly. The provider must allow browser (cross-origin) requests — most OpenAI-compatible clouds do, but some (and self-hosted servers) block it. Test the same URL/key in another tool to confirm.`;
+  }
+  return (error && error.message) || 'Unknown connection error.';
 };
 
 /**
@@ -117,7 +202,11 @@ export const testAiConnection = async (config: {
     });
 
     const latencyMs = Date.now() - startTime;
-    if (response.data && response.data.choices && response.data.choices.length > 0) {
+    if (
+      response.data &&
+      response.data.choices &&
+      response.data.choices.length > 0
+    ) {
       const reply = response.data.choices[0].message?.content || 'Success';
       return {
         success: true,
@@ -132,24 +221,9 @@ export const testAiConnection = async (config: {
       latencyMs,
     };
   } catch (error) {
-    let errorDetail = error.message;
-    if (error.response) {
-      if (error.response.status === 401) {
-        errorDetail = 'Authentication failed (401). Please check your API key.';
-      } else if (error.response.status === 404) {
-        errorDetail = `Endpoint or model not found (404). Check Base URL (${baseUrl}) or Model name (${config.model}).`;
-      } else if (error.response.data && error.response.data.error) {
-        errorDetail = error.response.data.error.message || JSON.stringify(error.response.data.error);
-      }
-    } else if (error.code === 'ECONNABORTED') {
-      errorDetail = 'Request timed out after 15s. Ensure the local server is running and responding.';
-    } else if (error.message.includes('Network Error') && (baseUrl.includes('localhost') || baseUrl.includes('127.0.0.1'))) {
-      errorDetail = `Could not reach ${baseUrl}. Ensure Ollama / local LLM is started (e.g. 'ollama serve') and CORS allows browser requests (OLLAMA_ORIGINS="*").`;
-    }
-
     return {
       success: false,
-      message: errorDetail,
+      message: describeAiError(error, baseUrl),
     };
   }
 };
@@ -248,7 +322,8 @@ export const executeUniversalAiChat = async ({
     {
       model: config.model || 'gpt-4o',
       messages: chatMessages,
-      temperature: typeof config.temperature === 'number' ? config.temperature : 0.7,
+      temperature:
+        typeof config.temperature === 'number' ? config.temperature : 0.7,
     },
     {
       headers,
@@ -272,7 +347,10 @@ export const executeUniversalAiChat = async ({
  */
 export const getLocalAiHistory = (): Array<AiRequest> => {
   try {
-    const raw = typeof localStorage !== 'undefined' ? localStorage.getItem(LOCAL_STORAGE_HISTORY_KEY) : null;
+    const raw =
+      typeof localStorage !== 'undefined'
+        ? localStorage.getItem(LOCAL_STORAGE_HISTORY_KEY)
+        : null;
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     return Array.isArray(parsed) ? parsed : [];

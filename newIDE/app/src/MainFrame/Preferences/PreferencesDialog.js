@@ -696,9 +696,7 @@ const PreferencesDialog = ({
           )}
         </ColumnStackLayout>
       )}
-      {currentTab === 'ai' && (
-        <AiProviderTab />
-      )}
+      {currentTab === 'ai' && <AiProviderTab />}
       {currentTab === 'shortcuts' && (
         <Line expand>
           <Column expand noMargin>

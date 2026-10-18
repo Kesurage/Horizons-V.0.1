@@ -4,7 +4,7 @@ import type {
   AiRequestAssistantMessage,
   AiRequestMessageAssistantFunctionCall,
 } from '../Utils/GDevelopServices/Generation';
-import { sanitizeBaseUrl } from './UniversalAiClient';
+import { sanitizeBaseUrl, getChatCompletionsUrl } from './UniversalAiClient';
 
 export type UniversalAiConfig = {
   baseUrl: string,
@@ -36,14 +36,22 @@ export const buildProjectDigest = (
     const projectName =
       (project.name && (project.name.value || project.name)) || 'Untitled';
     const description =
-      (project.description && (project.description.value || project.description)) || '';
+      (project.description &&
+        (project.description.value || project.description)) ||
+      '';
     const packageName =
-      (project.packageName && (project.packageName.value || project.packageName)) || '';
+      (project.packageName &&
+        (project.packageName.value || project.packageName)) ||
+      '';
     const orientation =
-      (project.orientation && (project.orientation.value || project.orientation)) || '';
+      (project.orientation &&
+        (project.orientation.value || project.orientation)) ||
+      '';
     const gameResolutionSize =
       project.properties && project.properties.gameResolutionSize
-        ? `${project.properties.gameResolutionSize[0]}x${project.properties.gameResolutionSize[1]}`
+        ? `${project.properties.gameResolutionSize[0]}x${
+            project.properties.gameResolutionSize[1]
+          }`
         : '';
     lines.push(`- Name: ${projectName}`);
     if (description) lines.push(`- Description: ${description}`);
@@ -53,14 +61,11 @@ export const buildProjectDigest = (
 
     // Global objects
     const globalObjects =
-      (project.objects && project.objects.objects) ||
-      project.objects ||
-      [];
+      (project.objects && project.objects.objects) || project.objects || [];
     if (Array.isArray(globalObjects) && globalObjects.length > 0) {
       lines.push('', '# GLOBAL OBJECTS');
       globalObjects.forEach(obj => {
-        const type =
-          (obj.type && (obj.type.value || obj.type)) || 'unknown';
+        const type = (obj.type && (obj.type.value || obj.type)) || 'unknown';
         lines.push(
           `- ${obj.name || '?'} (type: ${type}${
             obj.behaviors && obj.behaviors.length
@@ -81,7 +86,11 @@ export const buildProjectDigest = (
     if (Array.isArray(globalVariables) && globalVariables.length > 0) {
       lines.push('', '# GLOBAL VARIABLES');
       globalVariables.forEach(v => {
-        lines.push(`- ${v.name || '?'} (${v.type || 'number'}): ${JSON.stringify(v.value ?? '')}`);
+        lines.push(
+          `- ${v.name || '?'} (${v.type || 'number'}): ${JSON.stringify(
+            v.value ?? ''
+          )}`
+        );
       });
     }
 
@@ -91,7 +100,8 @@ export const buildProjectDigest = (
     if (Array.isArray(layouts)) {
       layouts.forEach(layout => {
         lines.push('', `# SCENE: ${layout.name || '?'}`);
-        if (layout.description) lines.push(`- Description: ${layout.description}`);
+        if (layout.description)
+          lines.push(`- Description: ${layout.description}`);
         const objects =
           (layout.objects && layout.objects.objects) || layout.objects || [];
         if (Array.isArray(objects) && objects.length > 0) {
@@ -117,7 +127,11 @@ export const buildProjectDigest = (
         if (Array.isArray(variables) && variables.length > 0) {
           lines.push('## Scene variables');
           variables.forEach(v => {
-            lines.push(`- ${v.name || '?'} (${v.type || 'number'}): ${JSON.stringify(v.value ?? '')}`);
+            lines.push(
+              `- ${v.name || '?'} (${v.type || 'number'}): ${JSON.stringify(
+                v.value ?? ''
+              )}`
+            );
           });
         }
         const instances =
@@ -208,15 +222,29 @@ export const UNIVERSAL_AI_TOOLS = [
         type: 'object',
         properties: {
           scene_name: { type: 'string', description: 'Name of the scene.' },
-          object_name: { type: 'string', description: 'Name of the object to create or replace.' },
+          object_name: {
+            type: 'string',
+            description: 'Name of the object to create or replace.',
+          },
           object_configuration_json: {
             type: 'string',
             description:
               'Optional JSON configuration of the object (GDevelop serialized format). If omitted, a default object of the requested type is created.',
           },
-          asset_id: { type: 'string', description: 'Optional asset store id to install the object from the asset store.' },
-          replace_existing_object: { type: 'boolean', description: 'Replace the object if it already exists.' },
-          placement_hint: { type: 'string', description: 'Optional short description of where/how the object should be used.' },
+          asset_id: {
+            type: 'string',
+            description:
+              'Optional asset store id to install the object from the asset store.',
+          },
+          replace_existing_object: {
+            type: 'boolean',
+            description: 'Replace the object if it already exists.',
+          },
+          placement_hint: {
+            type: 'string',
+            description:
+              'Optional short description of where/how the object should be used.',
+          },
         },
         required: ['scene_name', 'object_name'],
       },
@@ -277,7 +305,11 @@ export const UNIVERSAL_AI_TOOLS = [
         properties: {
           scene_name: { type: 'string' },
           object_name: { type: 'string' },
-          behavior_type: { type: 'string', description: 'Full behavior type, e.g. "PlatformerObjectBehavior" or "Physics2::Physics2Behavior".' },
+          behavior_type: {
+            type: 'string',
+            description:
+              'Full behavior type, e.g. "PlatformerObjectBehavior" or "Physics2::Physics2Behavior".',
+          },
         },
         required: ['scene_name', 'object_name', 'behavior_type'],
       },
@@ -339,7 +371,12 @@ export const UNIVERSAL_AI_TOOLS = [
             },
           },
         },
-        required: ['scene_name', 'object_name', 'behavior_name', 'changed_properties'],
+        required: [
+          'scene_name',
+          'object_name',
+          'behavior_name',
+          'changed_properties',
+        ],
       },
     },
   },
@@ -370,8 +407,15 @@ export const UNIVERSAL_AI_TOOLS = [
         properties: {
           scene_name: { type: 'string' },
           layer_name: { type: 'string' },
-          brush_kind: { type: 'string', description: 'How to paint/place instances (e.g. "single").' },
-          instances_json: { type: 'string', description: 'JSON array of instances to place with their properties.' },
+          brush_kind: {
+            type: 'string',
+            description: 'How to paint/place instances (e.g. "single").',
+          },
+          instances_json: {
+            type: 'string',
+            description:
+              'JSON array of instances to place with their properties.',
+          },
         },
         required: ['scene_name', 'layer_name', 'brush_kind'],
       },
@@ -430,9 +474,19 @@ export const UNIVERSAL_AI_TOOLS = [
             description:
               'JSON array or comma-separated names of extensions containing the needed conditions/actions (e.g. "BuiltinObject, BuiltinVariables, Physics2").',
           },
-          objects_list: { type: 'string', description: 'Optional list of object names concerned by the logic.' },
-          placement_hint: { type: 'string', description: 'Optional hint where to insert the events.' },
-          estimated_complexity: { type: 'number', description: 'Rough complexity estimate (1-10).' },
+          objects_list: {
+            type: 'string',
+            description:
+              'Optional list of object names concerned by the logic.',
+          },
+          placement_hint: {
+            type: 'string',
+            description: 'Optional hint where to insert the events.',
+          },
+          estimated_complexity: {
+            type: 'number',
+            description: 'Rough complexity estimate (1-10).',
+          },
         },
         required: ['scene_name', 'events_description', 'extension_names_list'],
       },
@@ -492,7 +546,17 @@ export const UNIVERSAL_AI_TOOLS = [
         type: 'object',
         properties: {
           scene_name: { type: 'string' },
-          changed_properties: { type: 'array', items: { type: 'object', properties: { property_name: { type: 'string' }, value: { type: 'string' } }, required: ['property_name', 'value'] } },
+          changed_properties: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                property_name: { type: 'string' },
+                value: { type: 'string' },
+              },
+              required: ['property_name', 'value'],
+            },
+          },
           changed_layers: { type: 'array', items: { type: 'object' } },
           changed_layer_effects: { type: 'array', items: { type: 'object' } },
           changed_groups: { type: 'array', items: { type: 'object' } },
@@ -510,12 +574,27 @@ export const UNIVERSAL_AI_TOOLS = [
       parameters: {
         type: 'object',
         properties: {
-          variable_scope: { type: 'string', description: '"global", "scene" or "object".' },
-          scene_name: { type: 'string', description: 'Required for scene and object scopes.' },
-          object_name: { type: 'string', description: 'Required for object scope.' },
+          variable_scope: {
+            type: 'string',
+            description: '"global", "scene" or "object".',
+          },
+          scene_name: {
+            type: 'string',
+            description: 'Required for scene and object scopes.',
+          },
+          object_name: {
+            type: 'string',
+            description: 'Required for object scope.',
+          },
           variable_name: { type: 'string' },
-          value: { type: 'string', description: 'The value of the variable, as a string.' },
-          variable_type: { type: 'string', description: '"number", "string" or "boolean".' },
+          value: {
+            type: 'string',
+            description: 'The value of the variable, as a string.',
+          },
+          variable_type: {
+            type: 'string',
+            description: '"number", "string" or "boolean".',
+          },
         },
         required: ['variable_scope', 'value'],
       },
@@ -739,13 +818,12 @@ export const convertGDevelopOutputToOpenAiMessages = (
   };
 
   (output || []).forEach((message: any) => {
-    if (
-      message.type === 'message' &&
-      message.role === 'user'
-    ) {
+    if (message.type === 'message' && message.role === 'user') {
       flushAssistant();
       const text = (message.content || [])
-        .filter(c => c.type === 'input_text' || (c.text && c.type !== 'function_call'))
+        .filter(
+          c => c.type === 'input_text' || (c.text && c.type !== 'function_call')
+        )
         .map(c => c.text || '')
         .join('\n');
       if (text) chatMessages.push({ role: 'user', content: text });
@@ -785,7 +863,10 @@ export const convertGDevelopOutputToOpenAiMessages = (
           {
             id: message.call_id,
             type: 'function',
-            function: { name: message.name, arguments: message.arguments || '{}' },
+            function: {
+              name: message.name,
+              arguments: message.arguments || '{}',
+            },
           },
         ],
       };
@@ -830,7 +911,14 @@ export const convertOpenAiResponseToGDevelopMessages = (
     content.push({
       type: 'function_call',
       status: 'completed',
-      call_id: toolCall.id || 'call_' + Date.now() + '_' + Math.random().toString(36).slice(2),
+      call_id:
+        toolCall.id ||
+        'call_' +
+          Date.now() +
+          '_' +
+          Math.random()
+            .toString(36)
+            .slice(2),
       name: toolCall.function?.name || 'unknown_function',
       arguments:
         typeof toolCall.function?.arguments === 'string'
@@ -843,7 +931,8 @@ export const convertOpenAiResponseToGDevelopMessages = (
     content.push({
       type: 'output_text',
       status: 'completed',
-      text: '(The model returned an empty response. Try rephrasing your request.)',
+      text:
+        '(The model returned an empty response. Try rephrasing your request.)',
       annotations: [],
     });
   }
@@ -878,7 +967,7 @@ export const runUniversalAiTurn = async ({
   mode: 'chat' | 'agent' | 'orchestrator',
   existingHistoryOutput?: ?Array<any>,
 }): Promise<{ messages: Array<any> }> => {
-  const baseUrl = sanitizeBaseUrl(config.baseUrl);
+  const baseUrl = sanitizeBaseUrl(config.baseUrl); // keep for error messages
   const headers: { [string]: string } = {
     'Content-Type': 'application/json',
   };
@@ -888,8 +977,7 @@ export const runUniversalAiTurn = async ({
 
   const chatMessages: Array<any> = [{ role: 'system', content: systemPrompt }];
 
-  const historyOutput =
-    historyGDevelopOutput || existingHistoryOutput || null;
+  const historyOutput = historyGDevelopOutput || existingHistoryOutput || null;
   if (historyOutput) {
     chatMessages.push(
       ...convertGDevelopOutputToOpenAiMessages((historyOutput: any))
@@ -903,11 +991,12 @@ export const runUniversalAiTurn = async ({
   const useTools = mode !== 'chat';
 
   const response = await axios.post(
-    `${baseUrl}/chat/completions`,
+    getChatCompletionsUrl(config.baseUrl),
     {
       model: config.model || 'gpt-4o',
       messages: chatMessages,
-      temperature: typeof config.temperature === 'number' ? config.temperature : 0.7,
+      temperature:
+        typeof config.temperature === 'number' ? config.temperature : 0.7,
       ...(useTools ? { tools: UNIVERSAL_AI_TOOLS, tool_choice: 'auto' } : {}),
     },
     { headers, timeout: 120000 }

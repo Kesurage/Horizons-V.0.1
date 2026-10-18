@@ -31,7 +31,9 @@ export const AiProviderTab = (): React.Node => {
   |}>(null);
   const [showApiKey, setShowApiKey] = React.useState(false);
   const [fetchingModels, setFetchingModels] = React.useState(false);
-  const [availableModels, setAvailableModels] = React.useState<Array<string>>([]);
+  const [availableModels, setAvailableModels] = React.useState<Array<string>>(
+    []
+  );
 
   const handleApplyPreset = (presetKey: string) => {
     const preset = AI_PRESETS[presetKey];
@@ -74,12 +76,15 @@ export const AiProviderTab = (): React.Node => {
       if (models.length > 0) {
         setTestResult({
           success: true,
-          message: `Found ${models.length} model(s) available on this endpoint.`,
+          message: `Found ${
+            models.length
+          } model(s) available on this endpoint.`,
         });
       } else {
         setTestResult({
           success: false,
-          message: 'Endpoint did not return a /models list. You can still type the model name manually.',
+          message:
+            'Endpoint did not return a /models list. You can still type the model name manually.',
         });
       }
     } catch (e) {
@@ -99,13 +104,20 @@ export const AiProviderTab = (): React.Node => {
       </Text>
       <Text size="body">
         <Trans>
-          Connect any OpenAI-compatible AI provider or local offline model (Ollama, LM Studio, OpenAI, OpenRouter, Groq, DeepSeek).
-          GDevelop proprietary cloud subscriptions are completely bypassed.
+          Connect any OpenAI-compatible AI provider or local offline model
+          (Ollama, LM Studio, OpenAI, OpenRouter, Groq, DeepSeek). GDevelop
+          proprietary cloud subscriptions are completely bypassed.
         </Trans>
       </Text>
 
       <Text size="sub-title">
         <Trans>Quick Presets</Trans>
+      </Text>
+      <Text size="body-small">
+        <Trans>
+          Presets only fill the fields below — everything stays freely editable.
+          Or skip them and paste your own Base URL + API key + model.
+        </Trans>
       </Text>
       <Line noMargin>
         <LineStackLayout wrap>
@@ -132,9 +144,10 @@ export const AiProviderTab = (): React.Node => {
 
       <TextField
         floatingLabelText={<Trans>API Base URL</Trans>}
-        value={values.aiBaseUrl || 'https://api.openai.com/v1'}
-        onChange={(e, text) => preferences.setAiBaseUrl(text)}
-        helperMarkdownText={t`e.g., \`https://api.openai.com/v1\`, \`http://localhost:11434/v1\` (Ollama), or \`https://openrouter.ai/api/v1\``}
+        value={values.aiBaseUrl || ''}
+        placeholder="https://api.openai.com/v1"
+        onChange={(e, text) => preferences.setAiBaseUrl(text.trim())}
+        helperMarkdownText={t`Free text — paste any OpenAI-compatible base URL and you can always edit or clear it. Examples: \`https://api.openai.com/v1\`, \`http://localhost:11434/v1\` (Ollama), \`https://open.bigmodel.cn/api/paas/v4\` (GLM), \`https://openrouter.ai/api/v1\`. If cleared, defaults to OpenAI.`}
         fullWidth
       />
 
@@ -159,14 +172,21 @@ export const AiProviderTab = (): React.Node => {
         <Column expand noMargin>
           <TextField
             floatingLabelText={<Trans>Model Name / ID</Trans>}
-            value={values.aiModel || 'gpt-4o'}
-            onChange={(e, text) => preferences.setAiModel(text)}
-            helperMarkdownText={t`e.g. \`gpt-4o\`, \`llama3.2:latest\`, \`deepseek-chat\`, \`anthropic/claude-3.5-sonnet\``}
+            value={values.aiModel || ''}
+            placeholder="gpt-4o"
+            onChange={(e, text) => preferences.setAiModel(text.trim())}
+            helperMarkdownText={t`Free text — type any model ID. e.g. \`gpt-4o\`, \`glm-4.6\`, \`gemini-2.5-flash\`, \`deepseek-chat\`, \`llama3.2:latest\`. If cleared, defaults to gpt-4o.`}
             fullWidth
           />
         </Column>
         <FlatButton
-          label={fetchingModels ? <Trans>Loading...</Trans> : <Trans>Discover Models</Trans>}
+          label={
+            fetchingModels ? (
+              <Trans>Loading...</Trans>
+            ) : (
+              <Trans>Discover Models</Trans>
+            )
+          }
           icon={<RefreshIcon />}
           disabled={fetchingModels}
           onClick={handleFetchModels}
@@ -192,9 +212,15 @@ export const AiProviderTab = (): React.Node => {
       )}
 
       <TextField
-        floatingLabelText={<Trans>Temperature (0.0 = Precise, 1.0 = Creative)</Trans>}
+        floatingLabelText={
+          <Trans>Temperature (0.0 = Precise, 1.0 = Creative)</Trans>
+        }
         type="number"
-        value={values.aiTemperature !== undefined ? String(values.aiTemperature) : '0.7'}
+        value={
+          values.aiTemperature !== undefined
+            ? String(values.aiTemperature)
+            : '0.7'
+        }
         onChange={(e, text) => {
           const val = parseFloat(text);
           if (!isNaN(val)) preferences.setAiTemperature(val);
@@ -223,7 +249,9 @@ export const AiProviderTab = (): React.Node => {
       <Line justifyContent="flex-start" noMargin>
         <RaisedButton
           primary
-          label={testing ? <Trans>Testing...</Trans> : <Trans>Test Connection</Trans>}
+          label={
+            testing ? <Trans>Testing...</Trans> : <Trans>Test Connection</Trans>
+          }
           icon={<CheckCircleIcon />}
           disabled={testing}
           onClick={handleTestConnection}
@@ -238,7 +266,9 @@ export const AiProviderTab = (): React.Node => {
 
       <AlertMessage kind="info">
         <Trans>
-          Offline tip: When using Ollama on your local machine, run `ollama serve` and set OLLAMA_ORIGINS="*" so the browser can make direct requests to `http://localhost:11434/v1`.
+          Offline tip: When using Ollama on your local machine, run `ollama
+          serve` and set OLLAMA_ORIGINS="*" so the browser can make direct
+          requests to `http://localhost:11434/v1`.
         </Trans>
       </AlertMessage>
     </ColumnStackLayout>
