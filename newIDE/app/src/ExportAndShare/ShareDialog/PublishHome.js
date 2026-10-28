@@ -384,19 +384,7 @@ const PublishHome = ({
       )}
       {!chosenSection && (
         <ColumnStackLayout noMargin>
-          <SectionLine
-            label={<Trans>gd.games</Trans>}
-            icon={getSubSectionIcon('browser', 'online')}
-            description={<Trans>Generate a shareable link to your game.</Trans>}
-            onClick={() => {
-              setHasSkippedSubSectionSelection(true);
-              onChooseSection('browser');
-              onChooseSubSection('online');
-            }}
-            highlighted
-            disabled={!isOnline}
-            id="publish-gd-games"
-          />
+          {/* Horizons: gd.games publishing removed (GDevelop service). */}
           {!showOnlineWebExporterOnly && (
             <SectionLine
               label={getSectionLabel({ section: 'browser' })}
@@ -444,15 +432,7 @@ const PublishHome = ({
       )}
       {chosenSection === 'browser' && !chosenSubSection && (
         <ColumnStackLayout noMargin>
-          <SectionLine
-            label={<Trans>gd.games</Trans>}
-            icon={getSubSectionIcon('browser', 'online')}
-            description={<Trans>Generate a shareable link to your game.</Trans>}
-            onClick={() => onChooseSubSection('online')}
-            highlighted
-            disabled={!isOnline}
-            id="publish-gd-games"
-          />
+          {/* Horizons: gd.games + Facebook Instant Games removed. */}
           {!showOnlineWebExporterOnly && (
             <SectionLine
               label={<Trans>HTML5 (external websites)</Trans>}
@@ -462,29 +442,11 @@ const PublishHome = ({
               id="publish-external-websites"
             />
           )}
-          {!showOnlineWebExporterOnly && (
-            <SectionLine
-              label={<Trans>Facebook Games</Trans>}
-              icon={getSubSectionIcon('browser', 'facebook')}
-              description={<Trans>Instant Games</Trans>}
-              onClick={() => onChooseSubSection('facebook')}
-              disabled={allExportersRequireOnline && !isOnline}
-              id="publish-facebook"
-            />
-          )}
         </ColumnStackLayout>
       )}
       {chosenSection === 'desktop' && !chosenSubSection && (
         <ColumnStackLayout noMargin>
-          <SectionLine
-            label={<Trans>One-click packaging</Trans>}
-            icon={getSubSectionIcon('desktop', 'online')}
-            description={<Trans>Windows, MacOS and Linux</Trans>}
-            onClick={() => onChooseSubSection('online')}
-            highlighted
-            disabled={!isOnline}
-            id="publish-desktop-cloud"
-          />
+          {/* Horizons: the online "One-click packaging" service was removed. */}
           <SectionLine
             label={<Trans>Manual build</Trans>}
             icon={getSubSectionIcon('desktop', 'offline')}
@@ -498,17 +460,9 @@ const PublishHome = ({
       )}
       {chosenSection === 'android' && !chosenSubSection && (
         <ColumnStackLayout noMargin>
+          {/* Horizons: the online "One-click packaging" service was removed. */}
           <SectionLine
-            label={<Trans>One-click packaging</Trans>}
-            icon={getSubSectionIcon('android', 'online')}
-            description={<Trans>Automated</Trans>}
-            onClick={() => onChooseSubSection('online')}
-            highlighted
-            disabled={!isOnline}
-            id="publish-mobile-cloud"
-          />
-          <SectionLine
-            label={<Trans>Manual build</Trans>}
+            label={<Trans>Manual build (Cordova)</Trans>}
             icon={getSubSectionIcon('desktop', 'offline')}
             description={<Trans>Development tools required</Trans>}
             onClick={() => onChooseSubSection('offline')}
@@ -520,17 +474,9 @@ const PublishHome = ({
       )}
       {chosenSection === 'ios' && !chosenSubSection && (
         <ColumnStackLayout noMargin>
+          {/* Horizons: the online "One-click packaging" service was removed. */}
           <SectionLine
-            label={<Trans>One-click packaging</Trans>}
-            icon={getSubSectionIcon('ios', 'online')}
-            description={<Trans>Automated</Trans>}
-            onClick={() => onChooseSubSection('online')}
-            highlighted
-            disabled={!isOnline}
-            id="publish-ios-cloud"
-          />
-          <SectionLine
-            label={<Trans>Manual build</Trans>}
+            label={<Trans>Manual build (Cordova)</Trans>}
             icon={getSubSectionIcon('desktop', 'offline')}
             description={<Trans>Development tools required</Trans>}
             onClick={() => onChooseSubSection('offline')}

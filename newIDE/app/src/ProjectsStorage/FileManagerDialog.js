@@ -14,16 +14,14 @@ import {
   deleteProject,
   type LocalProjectRecord,
 } from './LocalStorageProvider/LocalProjectsIndexedDB';
-import { openBlobDownloadUrl } from '../Utils/BlobDownloadUrlHolder';
+import { saveBlobToUserChosenPath } from '../Utils/SaveFilePicker';
 
 /**
- * Save a blob to the user's device (Downloads folder fallback everywhere,
- * including the Android app).
+ * Save a blob to the location the user chooses (File System Access API when
+ * available), falling back to a browser download.
  */
-const saveBlobAsFile = (blob: Blob, filename: string) => {
-  const url = URL.createObjectURL(blob);
-  openBlobDownloadUrl(url, filename);
-  setTimeout(() => URL.revokeObjectURL(url), 5000);
+const saveBlobAsFile = async (blob: Blob, filename: string) => {
+  await saveBlobToUserChosenPath(blob, filename);
 };
 
 const WORKSPACE_IDB_NAME = 'horizons-workspace';

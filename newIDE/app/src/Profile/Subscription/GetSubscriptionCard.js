@@ -69,74 +69,9 @@ const GetSubscriptionCard = ({
   canHide,
   placementId,
 }: Props): null | React.MixedElement => {
-  const [isHidden, setIsHidden] = React.useState(false);
-  const { openSubscriptionDialog } = React.useContext(SubscriptionContext);
-  const { isMobile } = useResponsiveWindowSize();
-  const columnLayout = forceColumnLayout || isMobile;
-
-  if (isHidden) return null;
-
-  return (
-    <div className={classes.premiumContainer}>
-      <Paper style={styles.paper} background="medium">
-        <Line expand alignItems="center" noMargin={!columnLayout}>
-          <img src="res/diamond.svg" style={styles.diamondIcon} alt="diamond" />
-          <Column expand justifyContent="center">
-            <ResponsiveLineStackLayout
-              alignItems="center"
-              noColumnMargin
-              noMargin
-              forceMobileLayout={columnLayout}
-            >
-              <Column noMargin expand>
-                {children}
-              </Column>
-              {payWithCreditsOptions && (
-                <FlatButton
-                  leftIcon={<Coin style={styles.coinIcon} />}
-                  label={payWithCreditsOptions.label}
-                  primary
-                  onClick={payWithCreditsOptions.onPayWithCredits}
-                />
-              )}
-              {!hideButton && (
-                <RaisedButton
-                  label={label || <Trans>Upgrade</Trans>}
-                  primary
-                  onClick={() => {
-                    if (onUpgrade) {
-                      onUpgrade();
-                    }
-                    openSubscriptionDialog({
-                      analyticsMetadata: {
-                        reason: subscriptionDialogOpeningReason,
-                        recommendedPlanId,
-                        placementId,
-                      },
-                    });
-                  }}
-                  icon={<CrownShining fontSize="small" />}
-                />
-              )}
-            </ResponsiveLineStackLayout>
-          </Column>
-        </Line>
-        {canHide && (
-          <div style={styles.topRightHideButton}>
-            <IconButton
-              aria-label="hide"
-              onClick={() => {
-                setIsHidden(true);
-              }}
-              size="small"
-            >
-              <Cross fontSize="small" />
-            </IconButton>
-          </div>
-        )}
-      </Paper>
-    </div>
-  );
+  // Horizons: subscriptions are gone — this upsell card never renders.
+  // The component is kept so every call site keeps compiling.
+  return null;
 };
 
 export default GetSubscriptionCard;

@@ -46,3 +46,21 @@ export const isWindows = (): boolean => _isWindows;
 export const isMacLike = (): boolean => _isMacLike;
 export const isMobile = (): boolean => _isMobile;
 export const isNativeMobileApp = (): boolean => false;
+
+/**
+ * True when the editor runs inside the Horizons Android/Android-APK shell
+ * (Capacitor WebView). In that environment `window.open` cannot display a
+ * real window, so previews must be shown in the in-app overlay instead.
+ */
+export const isRunningInCapacitor = (): boolean => {
+  try {
+    const capacitor = (typeof window !== 'undefined' ? window : {}).Capacitor;
+    return !!(
+      capacitor &&
+      typeof capacitor.isNativePlatform === 'function' &&
+      capacitor.isNativePlatform()
+    );
+  } catch (ignored) {
+    return false;
+  }
+};

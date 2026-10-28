@@ -173,14 +173,8 @@ export const buildMainMenuDeclarativeTemplate = ({
         enabled: !!project,
       },
       { type: 'separator' },
-      {
-        label: i18n._(t`Invite collaborators`),
-        accelerator: getElectronAccelerator(
-          shortcutMap['INVITE_COLLABORATORS']
-        ),
-        onClickSendEvent: 'main-menu-invite-collaborators',
-        enabled: !!project,
-      },
+      // Horizons: "Invite collaborators" removed — collaboration requires
+      // GDevelop cloud accounts.
       {
         label: i18n._(t`Files & workspace...`),
         onClickSendEvent: 'main-menu-open-files',
@@ -394,10 +388,6 @@ export const buildMainMenuDeclarativeTemplate = ({
           onClickSendEvent: 'main-menu-open-about',
         },
         { type: 'separator' },
-        {
-          label: i18n._(t`My Profile`),
-          onClickSendEvent: 'main-menu-open-profile',
-        },
         {
           label: i18n._(t`Preferences`),
           onClickSendEvent: 'main-menu-open-preferences',

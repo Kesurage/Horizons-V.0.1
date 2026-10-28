@@ -50,102 +50,12 @@ const useOpenInitialDialog = ({
     () => {
       async function openCorrespondingDialog() {
         switch (routeArguments['initial-dialog']) {
-          case 'subscription':
-            const recommendedPlanId =
-              routeArguments['recommended-plan-id'] || 'gdevelop_silver';
-            const couponCode = routeArguments['coupon-code'];
-
-            openSubscriptionDialog({
-              analyticsMetadata: {
-                reason: 'Landing dialog at opening',
-                recommendedPlanId,
-                placementId: 'opening-from-link',
-              },
-              couponCode: couponCode || undefined,
-            });
-            removeRouteArguments([
-              'initial-dialog',
-              'recommended-plan-id',
-              'coupon-code',
-            ]);
-            break;
+          // Horizons: 'subscription', 'signup', 'standalone' and
+          // 'credits-purchase' cases were removed — no GDevelop services.
           case 'profile':
-            if (loginState !== 'done') {
-              // Wait for the login state to be done (user is authenticated or not) before opening the dialog.
-              return;
-            }
-
-            if (authenticated) {
-              openProfileDialog();
-            } else {
-              // Similar to signup param, except we open the login dialog,
-              // this is meant for users who already have an account.
-              onOpenLoginDialog();
-            }
+            // Horizons: the profile dialog was removed. Just consume the
+            // route argument so the effect settles.
             removeRouteArguments(['initial-dialog']);
-            break;
-          case 'signup':
-            if (loginState !== 'done') {
-              // Wait for the login state to be done (user is authenticated or not) before opening the dialog.
-              return;
-            }
-
-            try {
-              const claimableToken = routeArguments['claimable-token'];
-              const purchaseId = routeArguments['purchase-id'];
-              // If there is no purchaseId or claimableToken, just open the signup/profile.
-              if (!purchaseId || !claimableToken) {
-                if (authenticated) {
-                  openProfileDialog();
-                } else {
-                  onOpenCreateAccountDialog();
-                }
-                return;
-              }
-
-              // Otherwise, try to claim the purchase.
-              const bundleId = routeArguments['bundle'];
-              let claimedProduct = null;
-              if (bundleId) {
-                const listedBundle = await getListedBundle({
-                  bundleId,
-                  visibility: 'all',
-                });
-                claimedProduct = listedBundle;
-              }
-
-              if (!claimedProduct) {
-                console.error(
-                  `The bundle with id ${bundleId} does not exist. Cannot claim.`
-                );
-                await showAlert({
-                  title: t`Unknown bundle`,
-                  message: t`The bundle you are trying to claim does not exist anymore. Please contact support if you think this is an error.`,
-                });
-                return;
-              }
-
-              const claimedProductOptions = {
-                productListingData: claimedProduct,
-                purchaseId,
-                claimableToken,
-              };
-
-              if (authenticated) {
-                onOpenPurchaseClaimDialog(claimedProductOptions);
-              } else {
-                onOpenCreateAccountWithPurchaseClaimDialog(
-                  claimedProductOptions
-                );
-              }
-            } finally {
-              removeRouteArguments([
-                'initial-dialog',
-                'purchase-id',
-                'claimable-token',
-                'bundle',
-              ]);
-            }
             break;
           case 'onboarding':
           case 'guided-lesson':
@@ -168,16 +78,6 @@ const useOpenInitialDialog = ({
             });
             removeRouteArguments(['initial-dialog']);
             break;
-          case 'standalone':
-            openStandaloneDialog();
-            // When on the standalone dialog,
-            // we don't remove the route argument so that the user always comes back to it
-            // when they come back from a checkout flow for instance.
-            break;
-          case 'credits-purchase':
-            openCreditsPackageDialog();
-            removeRouteArguments(['initial-dialog']);
-            break;
           default:
             break;
         }
@@ -191,17 +91,7 @@ const useOpenInitialDialog = ({
       openProfileDialog,
       openStandaloneDialog,
       removeRouteArguments,
-      openSubscriptionDialog,
-      authenticated,
-      onOpenCreateAccountDialog,
-      onOpenCreateAccountWithPurchaseClaimDialog,
-      onOpenLoginDialog,
       openAskAi,
-      loginState,
-      showAlert,
-      gdevelopTheme,
-      onOpenPurchaseClaimDialog,
-      openCreditsPackageDialog,
     ]
   );
 };

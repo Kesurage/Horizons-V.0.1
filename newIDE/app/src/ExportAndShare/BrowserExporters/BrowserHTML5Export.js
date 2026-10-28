@@ -21,6 +21,7 @@ import {
   BlobDownloadUrlHolder,
   openBlobDownloadUrl,
 } from '../../Utils/BlobDownloadUrlHolder';
+import { saveBlobToUserChosenPath } from '../../Utils/SaveFilePicker';
 import {
   ExplanationHeader,
   DoneFooter,
@@ -153,7 +154,18 @@ export const browserHTML5ExportPipeline: ExportPipeline<
             {blobDownloadUrl => (
               <RaisedButton
                 primary
-                onClick={() => openBlobDownloadUrl(blobDownloadUrl, 'game.zip')}
+                onClick={async () => {
+                  // Horizons: save to the folder the user chooses when the
+                  // browser supports it (File System Access API), instead of
+                  // always landing in the Downloads folder.
+                  const result = await saveBlobToUserChosenPath(
+                    compressionOutput,
+                    'game.zip'
+                  );
+                  if (result.savedToUserPath) return;
+                  if (!result.filename) return; // user cancelled
+                  openBlobDownloadUrl(blobDownloadUrl, 'game.zip');
+                }}
                 label={<Trans>Download the exported game</Trans>}
               />
             )}

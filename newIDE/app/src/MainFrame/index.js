@@ -5328,27 +5328,8 @@ const MainFrame = (props: Props): React.MixedElement => {
         i18n,
         resourceSources,
       })}
-      {profileDialogOpen && (
-        // ProfileDialog is dependent on multiple contexts,
-        // which are dependent of AuthenticatedUserContext.
-        // So it cannot be moved inside the AuthenticatedUserProvider,
-        // otherwise, those contexts would not be correctly mounted,
-        // as they are defined after the AuthenticatedUserProvider in Providers.js.
-        <ProfileDialog
-          onClose={() => {
-            openProfileDialog(false);
-          }}
-        />
-      )}
-      {authenticatedUser.claimedProductOptions && (
-        // PurchaseClaimDialog is dependent on SubscriptionContext,
-        // which is defined after the AuthenticatedUserProvider in Providers.js.
-        // So it cannot be rendered inside the AuthenticatedUserProvider.
-        <PurchaseClaimDialog
-          claimedProductOptions={authenticatedUser.claimedProductOptions}
-          onClose={authenticatedUser.onClosePurchaseClaimDialog}
-        />
-      )}
+      {/* Horizons: ProfileDialog and PurchaseClaimDialog removed —
+          no GDevelop account services in this editor. */}
       {renderNewProjectDialog()}
       {cloudProjectFileMetadataToRecover && (
         <CloudProjectRecoveryDialog

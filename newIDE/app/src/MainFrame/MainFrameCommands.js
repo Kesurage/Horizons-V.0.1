@@ -77,9 +77,8 @@ const useMainFrameCommands = (handlers: CommandHandlers) => {
     handler: handlers.onCloseApp,
   });
 
-  useCommand('OPEN_PROFILE', true, {
-    handler: handlers.onOpenProfile,
-  });
+  // Horizons: the profile/account area was removed (no GDevelop services).
+  // The OPEN_PROFILE command is intentionally not registered.
 
   useCommand('OPEN_PROJECT_MANAGER', true, {
     handler: handlers.onOpenProjectManager,

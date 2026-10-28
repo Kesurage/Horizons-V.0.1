@@ -320,6 +320,22 @@ if (workbox) {
     })
   );
 
+  // Horizons: the GDJS game runtime bundled with the app itself (same-origin
+  // /Runtime folder, copied at build time). Cache-first so previews and
+  // exports work offline; the folder only changes when the app updates.
+  workbox.routing.registerRoute(
+    /\/Runtime\/.*$/,
+    workbox.strategies.cacheFirst({
+      cacheName: 'gdjs-bundled-runtime',
+      plugins: [
+        new workbox.expiration.Plugin({
+          maxEntries: 600,
+          maxAgeSeconds: 60 * 24 * 60 * 60,
+        }),
+      ],
+    })
+  );
+
   // Asset marketplace API and user services stay online-only (never cached):
   // the marketplace needs fresh data and the AI providers must never be
   // answered from a cache.

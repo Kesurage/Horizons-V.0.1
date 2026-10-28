@@ -58,6 +58,7 @@ export type AiStatusEvent = {
   kind:
     | 'request-start'
     | 'queued'
+    | 'request-retry'
     | 'provider-cooldown'
     | 'provider-success'
     | 'delegation'
@@ -513,30 +514,59 @@ const callSlotChatCompletions = async ({
       payload.tool_choice = 'auto';
     }
 
-    runtime.requestTimestamps.push(Date.now());
-
-    try {
-      const response = await axios.post(
-        `${sanitizeBaseUrl(slot.baseUrl)}/chat/completions`,
-        payload,
-        { headers, timeout: 180000 }
-      );
-      return response.data;
-    } catch (error) {
-      if (isRateLimitError(error)) {
-        const retryAfterMs = extractRetryAfterMs(error) || 20000;
-        cooldownSlot(
-          slot,
-          Math.min(Math.max(retryAfterMs, 10000), 120000),
-          `${slot.label} hit its rate limit (HTTP ${
-            error.response ? error.response.status : 429
-          })`
+    // Transient errors (rate limits, 5xx, timeouts, network blips) are
+    // retried on the same provider before failing over to the next one.
+    const maxAttempts = 3;
+    let lastError: any = null;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      runtime.requestTimestamps.push(Date.now());
+      try {
+        const response = await axios.post(
+          `${sanitizeBaseUrl(slot.baseUrl)}/chat/completions`,
+          payload,
+          { headers, timeout: 180000 }
         );
-      } else if (isServerError(error)) {
-        cooldownSlot(slot, 15000, `${slot.label} had a server error`);
+        return response.data;
+      } catch (error) {
+        lastError = error;
+        if (isRateLimitError(error)) {
+          const retryAfterMs = extractRetryAfterMs(error) || 20000;
+          cooldownSlot(
+            slot,
+            Math.min(Math.max(retryAfterMs, 10000), 120000),
+            `${slot.label} hit its rate limit (HTTP ${
+              error.response ? error.response.status : 429
+            })`
+          );
+        } else if (isServerError(error)) {
+          cooldownSlot(slot, 15000, `${slot.label} had a server error`);
+        }
+        const retryable =
+          isRateLimitError(error) ||
+          isServerError(error) ||
+          (error &&
+            (error.code === 'ECONNABORTED' ||
+              (!error.response && !!error.message)));
+        if (!retryable || attempt >= maxAttempts) {
+          throw error;
+        }
+        const backoffMs = Math.min(
+          extractRetryAfterMs(error) || 3000 * attempt,
+          30000
+        );
+        emitAiStatus({
+          kind: 'request-retry',
+          slotId: slot.id,
+          label: slot.label,
+          message: `${slot.label} had a transient error (attempt ${attempt}/${maxAttempts}) — retrying in ${Math.round(
+            backoffMs / 1000
+          )}s.`,
+          timestamp: Date.now(),
+        });
+        await sleep(backoffMs);
       }
-      throw error;
     }
+    throw lastError || new Error('Request failed');
   });
   // Keep the queue chain alive even if this task fails.
   runtime.queue = task.catch(() => {});
@@ -811,3 +841,101 @@ export const getTeamSummary = (): Array<{|
 
 export const countReadySlots = (): number =>
   getProviderSlots().filter(isSlotUsable).length;
+
+export type SlotHealth = {| 
+  slotId: string,
+  ready: boolean,
+  enabled: boolean,
+  hasKey: boolean,
+  cooldownRemainingMs: number,
+  requestsLastMinute: number,
+  consecutiveFailures: number,
+|};
+
+/**
+ * Live runtime health of every slot (cooldowns, queue pressure, failures).
+ * Used by the team dialog to show what the orchestrator is doing right now.
+ */
+export const getSlotsHealth = (): Array<SlotHealth> => {
+  const now = Date.now();
+  return getProviderSlots().map(slot => {
+    const runtime = runtimes[slot.id];
+    const windowStart = now - 60 * 1000;
+    const recentTimestamps = runtime
+      ? runtime.requestTimestamps.filter(ts => ts > windowStart)
+      : [];
+    return {
+      slotId: slot.id,
+      ready: isSlotUsable(slot),
+      enabled: slot.enabled,
+      hasKey: slot.keyless || slot.apiKey.trim().length > 0,
+      cooldownRemainingMs:
+        runtime && runtime.cooldownUntil > now
+          ? runtime.cooldownUntil - now
+          : 0,
+      requestsLastMinute: recentTimestamps.length,
+      consecutiveFailures: runtime ? runtime.consecutiveFailures : 0,
+    };
+  });
+};
+
+/**
+ * Clear cooldowns / failure counters / rate windows — the "Refresh" button
+ * for when the team is stuck (e.g. after network came back).
+ */
+export const resetAiRuntimes = (slotId?: ?string): void => {
+  const resetOne = (id: string) => {
+    const runtime = runtimes[id];
+    if (runtime) {
+      runtime.cooldownUntil = 0;
+      runtime.requestTimestamps = [];
+      runtime.consecutiveFailures = 0;
+    }
+  };
+  if (slotId) {
+    resetOne(slotId);
+  } else {
+    Object.keys(runtimes).forEach(resetOne);
+  }
+};
+
+const isDefaultSlotId = (slotId: string): boolean =>
+  DEFAULT_PROVIDER_SLOTS.some(slot => slot.id === slotId);
+
+export const canRemoveSlot = (slotId: string): boolean =>
+  !isDefaultSlotId(slotId);
+
+/**
+ * Append a new user-defined OpenAI-compatible provider slot.
+ */
+export const addCustomProviderSlot = (
+  preset?: ?$Shape<AiProviderSlot>
+): Array<AiProviderSlot> => {
+  const slots = getProviderSlots();
+  const id = `custom-${Date.now().toString(36)}`;
+  slots.push({
+    id,
+    label: (preset && preset.label) || 'Custom provider',
+    baseUrl: (preset && preset.baseUrl) || '',
+    apiKey: (preset && preset.apiKey) || '',
+    model: (preset && preset.model) || '',
+    rpmLimit: (preset && preset.rpmLimit) || 0,
+    enabled: preset ? preset.enabled !== false : true,
+    role: (preset && preset.role) || 'fallback',
+    capabilities: (preset && preset.capabilities) || ['text'],
+    keyless: !!(preset && preset.keyless),
+  });
+  saveProviderSlots(slots);
+  return slots;
+};
+
+/**
+ * Remove a user-defined slot (default slots cannot be removed).
+ */
+export const removeProviderSlot = (slotId: string): Array<AiProviderSlot> => {
+  if (isDefaultSlotId(slotId)) return getProviderSlots();
+  const slots = getProviderSlots().filter(slot => slot.id !== slotId);
+  saveProviderSlots(slots);
+  delete runtimes[slotId];
+  return slots;
+};

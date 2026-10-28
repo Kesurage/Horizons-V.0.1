@@ -49,6 +49,11 @@ jobs:
           DISABLE_ESLINT_PLUGIN: 'true'
           NODE_OPTIONS: --max-old-space-size=6144
 
+      - name: Bundle the GDJS game runtime into the build (offline preview + exports)
+        run: |
+          cp -r newIDE/app/resources/GDJS/Runtime newIDE/app/build/Runtime
+          du -sh newIDE/app/build/Runtime
+
       - name: Regenerate service worker against real build output (full offline precache)
         working-directory: newIDE/app/scripts
         run: SW_BUILD_DIR=../build node make-service-worker.js
@@ -133,36 +138,37 @@ jobs:
       - name: Rename APK
         run: |
           mkdir -p release
-          cp capacitor-app/android/app/build/outputs/apk/release/app-release.apk release/Horizons-v0.2.0.apk
+          cp capacitor-app/android/app/build/outputs/apk/release/app-release.apk release/Horizons-v0.2.1.apk
           ls -la release/
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: horizons-apk
-          path: release/Horizons-v0.2.0.apk
+          path: release/Horizons-v0.2.1.apk
           retention-days: 30
 
       - name: Publish to GitHub Releases
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.2.0
-          name: Horizons V.0.2 — offline editor + multi-AI
+          tag_name: v0.2.1
+          name: Horizons V.0.2.1 — working preview, offline runtime, AI fixes
           body: |
-            ## Horizons V.0.2 APK
+            ## Horizons V.0.2.1 APK
 
-            Install: download `Horizons-v0.2.0.apk` on your Android device and open it (allow "install from unknown sources").
+            Install: download `Horizons-v0.2.1.apk` on your Android device and open it (allow "install from unknown sources").
 
-            ### Highlights
-            - Full GDevelop/Horizons editor, 100% offline (all engine + editor files bundled)
-            - Multi-AI team: GLM 4.7 Flash (primary) + Gemini Flash (specialist: web search, media analysis, failover) + optional fallbacks
-            - Automatic rate-limit queueing and provider failover (GLM ~40 RPM, Gemini ~15 RPM free tiers)
-            - AI agent with tool calling: project editing, ask_specialist, web_search
-            - File manager (Files & workspace... in the File menu)
-            - Asset marketplace stays online when you want it; everything else works offline
+            ### Fixes & changes
+            - **Preview now works inside the app** — games run in a full-screen in-app preview (with reload/close), no more silently-failing popups
+            - **Fully offline previews & HTML5 exports** — the whole GDJS game runtime (incl. Dialogue Tree/Yarn files) is bundled in the app
+            - **AI team upgrades**: model auto-discovery ("Discover models"), detailed error messages with fixes, retry with backoff, live slot health, add/remove providers, reset rate windows
+            - **GDevelop services removed**: no accounts, subscriptions or online build gates — only extension/asset downloads and free tutorials stay online
+            - **Real file saving**: HTML5 export and project saves go to the folder you pick (File System Access API)
+            - **Yarn editor unlocked for local projects** + Dialogue Tree runtime files bundled
+            - Touch scrolling and UI polish
           draft: false
           prerelease: false
-          files: release/Horizons-v0.2.0.apk
+          files: release/Horizons-v0.2.1.apk
           fail_on_unmatched_files: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

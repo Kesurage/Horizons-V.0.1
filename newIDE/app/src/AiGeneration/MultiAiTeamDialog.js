@@ -12,15 +12,23 @@ import { Column, Line, Spacer } from '../UI/Grid';
 import { CompactToggleField } from '../UI/CompactToggleField';
 import SelectField from '../UI/SelectField';
 import SelectOption from '../UI/SelectOption';
+import RefreshIcon from '../UI/CustomSvgIcons/Refresh';
+import DeleteIcon from '../UI/CustomSvgIcons/Trash';
 import {
   getProviderSlots,
   saveProviderSlots,
   subscribeAiStatus,
+  getSlotsHealth,
+  resetAiRuntimes,
+  addCustomProviderSlot,
+  removeProviderSlot,
+  canRemoveSlot,
   type AiProviderSlot,
   type AiProviderRole,
   type AiStatusEvent,
+  type SlotHealth,
 } from './MultiAiOrchestrator';
-import { testAiConnection } from './UniversalAiClient';
+import { testAiConnection, fetchAvailableModels } from './UniversalAiClient';
 import { type Limits } from '../Utils/GDevelopServices/Usage';
 
 const FREE_TIER_HINTS: { [string]: string } = {
@@ -38,21 +46,48 @@ const ROLE_LABELS: { [AiProviderRole]: string } = {
   fallback: 'Fallback (when others are limited)',
 };
 
+/** Quick-add presets for custom providers. */
+const ADD_PRESETS: Array<{| label: string, baseUrl: string, model: string |}> = [
+  { label: 'Z.ai (GLM)', baseUrl: 'https://api.z.ai/api/paas/v4', model: 'glm-4.7-flash' },
+  {
+    label: 'Gemini (Google AI)',
+    baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
+    model: 'gemini-flash-latest',
+  },
+  { label: 'Groq', baseUrl: 'https://api.groq.com/openai/v1', model: 'llama-3.3-70b-versatile' },
+  { label: 'OpenRouter', baseUrl: 'https://openrouter.ai/api/v1', model: '' },
+  { label: 'DeepSeek', baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat' },
+  { label: 'OpenAI', baseUrl: 'https://api.openai.com/v1', model: 'gpt-4o' },
+  { label: 'Ollama (local)', baseUrl: 'http://localhost:11434/v1', model: '' },
+  { label: 'LM Studio (local)', baseUrl: 'http://localhost:1234/v1', model: '' },
+  { label: 'Other (OpenAI-compatible)', baseUrl: '', model: '' },
+];
+
 type SlotCardState = {|
   testing: boolean,
   testResult: ?{| success: boolean, message: string |},
+  fetchingModels: boolean,
+  models: Array<string>,
+  modelsError: ?string,
 |};
 
 const SlotCard = ({
   slot,
+  health,
   onChange,
+  onRemove,
 }: {|
   slot: AiProviderSlot,
+  health: ?SlotHealth,
   onChange: (updates: $Shape<AiProviderSlot>) => void,
+  onRemove?: () => void,
 |}): React.Node => {
   const [state, setState] = React.useState<SlotCardState>({
     testing: false,
     testResult: null,
+    fetchingModels: false,
+    models: [],
+    modelsError: null,
   });
   const [showKey, setShowKey] = React.useState<boolean>(false);
   const [expanded, setExpanded] = React.useState<boolean>(false);
@@ -60,30 +95,72 @@ const SlotCard = ({
   const ready = slot.enabled && (slot.keyless || slot.apiKey.trim().length > 0);
 
   const handleTest = async () => {
-    setState({ testing: true, testResult: null });
+    setState(prev => ({ ...prev, testing: true, testResult: null }));
     try {
       const result = await testAiConnection({
         baseUrl: slot.baseUrl,
         apiKey: slot.apiKey,
         model: slot.model,
       });
-      setState({ testing: false, testResult: result });
+      setState(prev => ({ ...prev, testing: false, testResult: result }));
     } catch (error) {
-      setState({
+      setState(prev => ({
+        ...prev,
         testing: false,
         testResult: {
           success: false,
           message: (error && error.message) || 'Test failed',
         },
-      });
+      }));
     }
   };
 
+  const handleFetchModels = async () => {
+    setState(prev => ({
+      ...prev,
+      fetchingModels: true,
+      modelsError: null,
+    }));
+    try {
+      const models = await fetchAvailableModels({
+        baseUrl: slot.baseUrl,
+        apiKey: slot.apiKey,
+      });
+      setState(prev => ({
+        ...prev,
+        fetchingModels: false,
+        models,
+        modelsError: null,
+      }));
+    } catch (error) {
+      setState(prev => ({
+        ...prev,
+        fetchingModels: false,
+        models: [],
+        modelsError:
+          (error && error.message) || 'Could not fetch the model list.',
+      }));
+    }
+  };
+
+  const healthSummary = health
+    ? [
+        health.cooldownRemainingMs > 0
+          ? `cooling down ${Math.ceil(health.cooldownRemainingMs / 1000)}s`
+          : null,
+        health.requestsLastMinute > 0
+          ? `${health.requestsLastMinute} req in the last minute`
+          : null,
+        health.consecutiveFailures > 0
+          ? `${health.consecutiveFailures} failure(s) in a row`
+          : null,
+      ]
+        .filter(Boolean)
+        .join(' · ')
+    : '';
+
   return (
-    <LineStackLayout
-      noMargin
-      alignItems="center"
-    >
+    <LineStackLayout noMargin alignItems="center">
       <Column expand noMargin>
         <Line alignItems="center" noMargin>
           <span
@@ -106,9 +183,14 @@ const SlotCard = ({
           </Text>
         </Line>
         <Text size="body-small">
-          {ROLE_LABELS[slot.role]} · {slot.model}
+          {ROLE_LABELS[slot.role]} · {slot.model || '(no model set)'}
           {slot.rpmLimit > 0 ? ` · ${slot.rpmLimit} req/min max` : ''}
         </Text>
+        {healthSummary && (
+          <Text size="body-small" noMargin>
+            {healthSummary}
+          </Text>
+        )}
         {FREE_TIER_HINTS[slot.id] && (
           <Text size="body-small" noMargin>
             {FREE_TIER_HINTS[slot.id]}
@@ -132,10 +214,18 @@ const SlotCard = ({
         <Column expand noMargin>
           <Spacer />
           <TextField
+            floatingLabelText={<Trans>Display name</Trans>}
+            value={slot.label}
+            fullWidth
+            onChange={(e, text) => onChange({ label: text })}
+          />
+          <TextField
             floatingLabelText={<Trans>Base URL</Trans>}
             value={slot.baseUrl}
+            placeholder="https://api.example.com/v1"
             fullWidth
             onChange={(e, text) => onChange({ baseUrl: text.trim() })}
+            helperMarkdownText={t`Any OpenAI-compatible endpoint. An origin without a path gets /v1 appended automatically; a pasted /chat/completions suffix is stripped.`}
           />
           {!slot.keyless && (
             <Line alignItems="center" noMargin>
@@ -160,11 +250,43 @@ const SlotCard = ({
               <TextField
                 floatingLabelText={<Trans>Model</Trans>}
                 value={slot.model}
+                placeholder="gpt-4o"
                 fullWidth
                 onChange={(e, text) => onChange({ model: text.trim() })}
               />
             </Column>
-            <Column noMargin>
+            <FlatButton
+              label={
+                state.fetchingModels ? (
+                  <Trans>Loading...</Trans>
+                ) : (
+                  <Trans>Discover models</Trans>
+                )
+              }
+              icon={<RefreshIcon />}
+              disabled={state.fetchingModels || !slot.baseUrl}
+              onClick={handleFetchModels}
+            />
+          </Line>
+          {state.modelsError && (
+            <AlertMessage kind="warning">
+              {state.modelsError}
+            </AlertMessage>
+          )}
+          {state.models.length > 0 && (
+            <LineStackLayout wrap noMargin>
+              {state.models.slice(0, 12).map(modelId => (
+                <FlatButton
+                  key={modelId}
+                  label={modelId}
+                  primary={slot.model === modelId}
+                  onClick={() => onChange({ model: modelId })}
+                />
+              ))}
+            </LineStackLayout>
+          )}
+          <Line alignItems="center" noMargin>
+            <Column expand noMargin>
               <TextField
                 floatingLabelText={<Trans>Requests / minute</Trans>}
                 type="number"
@@ -175,6 +297,13 @@ const SlotCard = ({
                   onChange({ rpmLimit: isNaN(value) ? 0 : value });
                 }}
                 helperMarkdownText={t`0 = no limit. Requests queue automatically when the free-tier rate window is full.`}
+              />
+            </Column>
+            <Column noMargin>
+              <FlatButton
+                label={<Trans>Refresh rate window</Trans>}
+                icon={<RefreshIcon />}
+                onClick={() => resetAiRuntimes(slot.id)}
               />
             </Column>
           </Line>
@@ -204,6 +333,13 @@ const SlotCard = ({
               disabled={state.testing}
               onClick={handleTest}
             />
+            {onRemove && (
+              <FlatButton
+                icon={<DeleteIcon />}
+                label={<Trans>Remove</Trans>}
+                onClick={onRemove}
+              />
+            )}
           </Line>
           {state.testResult && (
             <AlertMessage kind={state.testResult.success ? 'info' : 'error'}>
@@ -228,11 +364,14 @@ type Props = {|
  */
 export const MultiAiTeamDialog = ({ open, onClose }: Props): React.Node => {
   const [slots, setSlots] = React.useState<Array<AiProviderSlot>>([]);
+  const [health, setHealth] = React.useState<Array<SlotHealth>>([]);
   const [lastEvent, setLastEvent] = React.useState<?AiStatusEvent>(null);
+  const [showAddPresets, setShowAddPresets] = React.useState<boolean>(false);
 
   React.useEffect(() => {
     if (open) {
       setSlots(getProviderSlots());
+      setHealth(getSlotsHealth());
     }
   }, [open]);
 
@@ -240,6 +379,13 @@ export const MultiAiTeamDialog = ({ open, onClose }: Props): React.Node => {
     const unsubscribe = subscribeAiStatus(event => setLastEvent(event));
     return unsubscribe;
   }, []);
+
+  // Keep the live health lines fresh while the dialog is open.
+  React.useEffect(() => {
+    if (!open) return;
+    const interval = setInterval(() => setHealth(getSlotsHealth()), 3000);
+    return () => clearInterval(interval);
+  }, [open]);
 
   const handleSlotChange = (slotId: string, updates: $Shape<AiProviderSlot>) => {
     setSlots(prevSlots =>
@@ -254,9 +400,34 @@ export const MultiAiTeamDialog = ({ open, onClose }: Props): React.Node => {
     onClose();
   };
 
+  const handleAddProvider = (preset: {| label: string, baseUrl: string, model: string |}) => {
+    const newSlots = addCustomProviderSlot({
+      label: preset.label,
+      baseUrl: preset.baseUrl,
+      model: preset.model,
+      role: 'fallback',
+    });
+    setSlots(newSlots);
+    setShowAddPresets(false);
+  };
+
+  const handleRemoveSlot = (slotId: string) => {
+    setSlots(removeProviderSlot(slotId));
+  };
+
+  const handleRefreshStatus = () => {
+    setSlots(getProviderSlots());
+    setHealth(getSlotsHealth());
+  };
+
   const readyCount = slots.filter(
     slot => slot.enabled && (slot.keyless || slot.apiKey.trim().length > 0)
   ).length;
+
+  const healthBySlotId: { [string]: SlotHealth } = {};
+  health.forEach(entry => {
+    healthBySlotId[entry.slotId] = entry;
+  });
 
   return (
     <Dialog
@@ -278,6 +449,20 @@ export const MultiAiTeamDialog = ({ open, onClose }: Props): React.Node => {
         />,
       ]}
       secondaryActions={[
+        <FlatButton
+          key="refresh"
+          label={<Trans>Refresh status</Trans>}
+          icon={<RefreshIcon />}
+          onClick={handleRefreshStatus}
+        />,
+        <FlatButton
+          key="reset-windows"
+          label={<Trans>Reset rate windows</Trans>}
+          onClick={() => {
+            resetAiRuntimes();
+            setHealth(getSlotsHealth());
+          }}
+        />,
         <FlatButton
           key="defaults"
           label={<Trans>Reset to defaults</Trans>}
@@ -306,20 +491,30 @@ export const MultiAiTeamDialog = ({ open, onClose }: Props): React.Node => {
             <Trans>
               No provider is ready yet. Add an API key to at least one provider
               below (GLM from z.ai, Gemini from Google AI Studio — both have
-              free tiers).
+              free tiers), then press <b>Test</b> to check it.
             </Trans>
           </AlertMessage>
         ) : (
           <AlertMessage kind="info">
             <Trans>
-              {readyCount} provider(s) ready. Requests automatically fail over
-              to the next provider on rate limits (HTTP 429) or outages.
+              {readyCount} provider(s) ready. Requests automatically retry and
+              fail over to the next provider on rate limits (HTTP 429) or
+              outages.
             </Trans>
           </AlertMessage>
         )}
 
         {lastEvent && (
-          <AlertMessage kind={lastEvent.kind === 'team-exhausted' ? 'error' : 'info'}>
+          <AlertMessage
+            kind={
+              lastEvent.kind === 'team-exhausted'
+                ? 'error'
+                : lastEvent.kind === 'request-retry' ||
+                  lastEvent.kind === 'provider-cooldown'
+                ? 'warning'
+                : 'info'
+            }
+          >
             <b>{lastEvent.label}</b>: {lastEvent.message}
           </AlertMessage>
         )}
@@ -335,16 +530,46 @@ export const MultiAiTeamDialog = ({ open, onClose }: Props): React.Node => {
           >
             <SlotCard
               slot={slot}
+              health={healthBySlotId[slot.id]}
               onChange={updates => handleSlotChange(slot.id, updates)}
+              onRemove={
+                canRemoveSlot(slot.id)
+                  ? () => handleRemoveSlot(slot.id)
+                  : null
+              }
             />
           </div>
         ))}
 
+        {showAddPresets ? (
+          <ColumnStackLayout noMargin>
+            <Text size="sub-title">
+              <Trans>Pick a provider to add</Trans>
+            </Text>
+            <LineStackLayout wrap noMargin>
+              {ADD_PRESETS.map(preset => (
+                <FlatButton
+                  key={preset.label}
+                  label={preset.label}
+                  onClick={() => handleAddProvider(preset)}
+                />
+              ))}
+            </LineStackLayout>
+          </ColumnStackLayout>
+        ) : (
+          <RaisedButton
+            label={<Trans>Add a provider</Trans>}
+            icon={<RefreshIcon />}
+            onClick={() => setShowAddPresets(true)}
+          />
+        )}
+
         <Text size="body-small">
           <Trans>
-            Tip: keys stay on this device (local storage). The AI can use the
-            specialist via ask_specialist and web_search tools when you enable
-            Gemini.
+            Tip: keys stay on this device (local storage). Use <b>Discover
+            models</b> to list the models an endpoint offers, and <b>Test</b>{" "}
+            to verify a provider before saving. The AI can use the specialist
+            via ask_specialist and web_search tools when you enable Gemini.
           </Trans>
         </Text>
       </ColumnStackLayout>

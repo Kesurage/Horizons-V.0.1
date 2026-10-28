@@ -18,14 +18,32 @@
 }
 
 html {
-  /* Disable browser zooming/auto panning */
-  touch-action: none;
+  /* Horizons: `touch-action: none` here made ALL native touch scrolling
+     impossible inside the app (the effective touch-action is the
+     intersection with ancestors) — lists, panels and dialogs could not be
+     scrolled by touch. Use `manipulation` instead (allows panning, keeps
+     double-tap-zoom off), and let the editor canvases opt out below. */
+  touch-action: manipulation;
 
   /* Prevent larger texts in landscape mode on Safari iOS */
   -webkit-text-size-adjust: 100%;
 
   /* Prevent callout when long pressing images by default on Safari iOS */
   -webkit-touch-callout: none;
+
+  /* No rubber-banding / pull-to-refresh in the app shell. */
+  overscroll-behavior: none;
+}
+
+/* The game/scene editor canvases implement their own touch gestures
+   (panning, pinching) — keep the browser's hands off them. */
+canvas {
+  touch-action: none;
+}
+
+/* Cleaner taps on touch screens. */
+button, a, [role="button"] {
+  -webkit-tap-highlight-color: transparent;
 }
 
 body {

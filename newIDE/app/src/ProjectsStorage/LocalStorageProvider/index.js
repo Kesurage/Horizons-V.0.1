@@ -26,6 +26,40 @@ import {
   LocalProjectsPickerDialog,
   LocalProjectSaveAsDialog,
 } from './LocalProjectsPickerDialog';
+import { convertBlobToDataURL } from '../../Utils/BlobDownloader';
+
+/**
+ * Horizons: resources created/edited during the session (Piskel, Jfxr, Yarn
+ * editors, imported images) are stored as transient `blob:` URLs. Those die
+ * as soon as the app closes — convert them to self-contained `data:` URLs
+ * before saving so the project works after it is re-opened.
+ */
+const persistBlobUrlResources = async (project: gdProject): Promise<void> => {
+  try {
+    const resourcesManager = project.getResourcesManager();
+    const resourcesNames = resourcesManager.getAllResourceNames().toJSArray();
+    await Promise.all(
+      resourcesNames.map(async resourceName => {
+        try {
+          const resource = resourcesManager.getResource(resourceName);
+          const file = resource.getFile();
+          if (!file || file.indexOf('blob:') !== 0) return;
+          const response = await fetch(file);
+          const blob = await response.blob();
+          const dataUrl = await convertBlobToDataURL(blob);
+          resource.setFile(dataUrl);
+        } catch (error) {
+          console.error(
+            `Unable to persist the resource "${resourceName}" (blob URL could not be read). It will be lost after the app restarts.`,
+            error
+          );
+        }
+      })
+    );
+  } catch (error) {
+    console.error('Unable to persist blob URL resources.', error);
+  }
+};
 
 const serializeProject = async (project: gdProject): Promise<string> => {
   try {
@@ -131,6 +165,7 @@ export default ({
         showConfirmation: ShowConfirmFunction,
       |}
     ) => {
+      await persistBlobUrlResources(project);
       const content = await serializeProject(project);
       const now = Date.now();
       const record: LocalProjectRecord = {
@@ -211,6 +246,7 @@ export default ({
         // if moving them is not possible.
         console.error('Unable to move resources to the device storage:', error);
       }
+      await persistBlobUrlResources(project);
       if (name !== project.getName()) {
         project.setName(name);
       }

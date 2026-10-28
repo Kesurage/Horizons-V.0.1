@@ -21,9 +21,69 @@ import {
 } from '../Utils/BlobDownloader';
 import { showWarningBox } from '../UI/Messages/MessageBox';
 import { displayBlackLoadingScreenOrThrow } from '../Utils/BrowserExternalWindowUtils';
+import { isRunningInCapacitor } from '../Utils/Platform';
 import { UserCancellationError } from '../LoginProvider/Utils';
 import { triggerOnResourceExternallyChanged } from '../MainFrame/ResourcesWatcher';
 let nextExternalEditorWindowId = 0;
+
+/**
+ * Horizons: in the app shell (Capacitor WebView), window.open can't show a
+ * window — open the external editor (Piskel, Jfxr, Yarn) in a full-screen,
+ * in-app iframe overlay instead. The returned WindowProxy is the iframe's
+ * real contentWindow, so the message-based protocol works unchanged.
+ */
+const openInAppExternalEditorOverlay = (editorTitle: string): WindowProxy => {
+  const container = document.createElement('div');
+  container.setAttribute('data-horizons-editor-overlay', 'true');
+  container.style.cssText =
+    'position:fixed;top:0;left:0;right:0;bottom:0;z-index:2100;background:#171717;display:flex;flex-direction:column;';
+
+  const header = document.createElement('div');
+  header.style.cssText =
+    'display:flex;align-items:center;justify-content:space-between;padding:6px 10px;background:#1f1f1f;border-bottom:1px solid #333;min-height:44px;flex-shrink:0;color:#f5f5f5;font-family:sans-serif;font-size:13px;';
+
+  const title = document.createElement('span');
+  title.textContent = editorTitle;
+  header.appendChild(title);
+
+  const closeButton = document.createElement('button');
+  closeButton.textContent = 'Close';
+  closeButton.style.cssText =
+    'background:#333;color:#fff;border:none;border-radius:6px;padding:8px 16px;font-size:13px;cursor:pointer;';
+  header.appendChild(closeButton);
+
+  const iframe = document.createElement('iframe');
+  iframe.style.cssText = 'flex:1;width:100%;border:none;background:#ffffff;';
+  iframe.setAttribute('title', 'Horizons external editor');
+  iframe.src = 'about:blank';
+
+  container.appendChild(header);
+  container.appendChild(iframe);
+  document.body.appendChild(container);
+
+  const removeOverlay = () => {
+    if (container.parentNode) {
+      container.parentNode.removeChild(container);
+    }
+  };
+
+  // Navigating the iframe away fires its `unload` event, which the editor
+  // bridge listens to in order to finish the editing session.
+  closeButton.onclick = () => {
+    try {
+      iframe.contentWindow.location.href = 'about:blank';
+    } catch (ignored) {}
+    setTimeout(removeOverlay, 100);
+  };
+
+  const contentWindow = iframe.contentWindow;
+  if (!contentWindow) {
+    throw new Error(
+      "Can't open the external editor because of browser restrictions."
+    );
+  }
+  return contentWindow;
+};
 
 const externalEditorIndexHtml: { ['piskel' | 'yarn' | 'jfxr']: string } = {
   piskel: 'external/piskel/piskel-index.html',
@@ -165,20 +225,31 @@ export const downloadAndPrepareExternalEditorBase64Resources = async ({
 
   const urlsToDownload: Array<ResourceToDownload> = [];
   const resourcesManager = project.getResourcesManager();
+  const directlySupportedDataUrls = new Map<
+    string,
+    string
+  >();
   resourceNames.forEach(resourceName => {
     if (!resourcesManager.hasResource(resourceName)) return;
 
     const resource = resourcesManager.getResource(resourceName);
     const url = resource.getFile();
-    if (isURL(url)) {
-      if (isBlobURL(url)) {
-        console.error('Unsupported blob URL for a resource - ignoring it.');
-      } else {
-        urlsToDownload.push({
-          url,
-          resourceName,
-        });
-      }
+    if (url && url.indexOf('data:') === 0) {
+      // Horizons: resources persisted as data URLs (local projects) can be
+      // passed to the external editor as-is.
+      directlySupportedDataUrls.set(resourceName, url);
+    } else if (isURL(url)) {
+      urlsToDownload.push({
+        url,
+        resourceName,
+      });
+    } else if (url && url.indexOf('blob:') === 0) {
+      // Horizons: freshly created/edited resources (blob URLs) can be read
+      // and converted too.
+      urlsToDownload.push({
+        url,
+        resourceName,
+      });
     } else {
       console.error('Unsupported local file for a resource - ignoring it.');
     }
@@ -199,6 +270,9 @@ export const downloadAndPrepareExternalEditorBase64Resources = async ({
       localFilePath?: string,
     |}
   >();
+  directlySupportedDataUrls.forEach((dataUrl, resourceName) => {
+    resourcesToDataUrl.set(resourceName, { dataUrl });
+  });
   await Promise.all(
     downloadedBlobs.map(async ({ error, blob, item }) => {
       if (blob) {
@@ -362,7 +436,18 @@ const cloudProjectWarning = t`You need to save this project as a cloud project t
  * NOT in an asynchronous way but JUST after a click. Otherwise, browsers like Safari
  * will block the window opening.
  */
-const immediatelyOpenLoadingWindowForExternalEditor = () => {
+const immediatelyOpenLoadingWindowForExternalEditor = (
+  editorTitle?: string
+) => {
+  if (isRunningInCapacitor()) {
+    // Horizons: no popup windows in the app shell — use the in-app overlay.
+    const overlayWindow = openInAppExternalEditorOverlay(
+      editorTitle || 'Editor'
+    );
+    displayBlackLoadingScreenOrThrow(overlayWindow);
+    return overlayWindow;
+  }
+
   const targetId = 'GDevelopExternalEditor' + nextExternalEditorWindowId++;
   const width = 800;
   const height = 600;
@@ -388,6 +473,10 @@ const immediatelyOpenLoadingWindowForExternalEditor = () => {
 /**
  * This is the list of editors that can be used to edit resources
  * when running in a browser.
+ *
+ * Horizons: all three editors are available for local projects too —
+ * edited resources are persisted as data URLs when the project is saved
+ * on the device (see LocalStorageProvider.persistBlobUrlResources).
  */
 const editors: Array<ResourceExternalEditor> = [
   {
@@ -396,15 +485,9 @@ const editors: Array<ResourceExternalEditor> = [
     editDisplayName: t`Edit with Piskel`,
     kind: 'image',
     edit: async options => {
-      if (options.getStorageProvider().internalName !== 'Cloud') {
-        const { i18n } = options;
-        showWarningBox(i18n._(cloudProjectWarning), {
-          delayToNextTick: true,
-        });
-        return null;
-      }
-
-      const externalEditorWindow = immediatelyOpenLoadingWindowForExternalEditor();
+      const externalEditorWindow = immediatelyOpenLoadingWindowForExternalEditor(
+        'Piskel — image editor'
+      );
       // $FlowFixMe[incompatible-type]
       return await editWithBrowserExternalEditor({
         options,
@@ -422,15 +505,9 @@ const editors: Array<ResourceExternalEditor> = [
     editDisplayName: t`Edit with Jfxr`,
     kind: 'audio',
     edit: async options => {
-      if (options.getStorageProvider().internalName !== 'Cloud') {
-        const { i18n } = options;
-        showWarningBox(i18n._(cloudProjectWarning), {
-          delayToNextTick: true,
-        });
-        return null;
-      }
-
-      const externalEditorWindow = immediatelyOpenLoadingWindowForExternalEditor();
+      const externalEditorWindow = immediatelyOpenLoadingWindowForExternalEditor(
+        'Jfxr — sound effect editor'
+      );
       return await editWithBrowserExternalEditor({
         options,
         externalEditorWindow,
@@ -447,15 +524,9 @@ const editors: Array<ResourceExternalEditor> = [
     editDisplayName: t`Edit with Yarn`,
     kind: 'json',
     edit: async options => {
-      if (options.getStorageProvider().internalName !== 'Cloud') {
-        const { i18n } = options;
-        showWarningBox(i18n._(cloudProjectWarning), {
-          delayToNextTick: true,
-        });
-        return null;
-      }
-
-      const externalEditorWindow = immediatelyOpenLoadingWindowForExternalEditor();
+      const externalEditorWindow = immediatelyOpenLoadingWindowForExternalEditor(
+        'Yarn — dialogue tree editor'
+      );
       return await editWithBrowserExternalEditor({
         options,
         externalEditorWindow,

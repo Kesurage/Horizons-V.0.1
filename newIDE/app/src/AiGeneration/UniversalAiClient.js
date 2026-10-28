@@ -188,6 +188,39 @@ export const describeAiError = (error: any, baseUrl: string): string => {
 /**
  * Test connectivity and model response from any OpenAI-compatible endpoint.
  */
+const parseModelsResponseData = (data: any): Array<string> => {
+  const extract = (item: any): ?string => {
+    if (typeof item === 'string') return item;
+    if (!item) return null;
+    const id = item.id || item.name || item.model || null;
+    if (typeof id !== 'string') return null;
+    // Gemini native lists look like "models/gemini-2.5-flash".
+    return id.startsWith('models/') ? id.slice('models/'.length) : id;
+  };
+  if (Array.isArray(data)) {
+    return data.map(extract).filter(Boolean);
+  }
+  if (data && Array.isArray(data.data)) {
+    return data.data.map(extract).filter(Boolean);
+  }
+  if (data && Array.isArray(data.models)) {
+    return data.models.map(extract).filter(Boolean);
+  }
+  return [];
+};
+
+const isGeminiNativeBaseUrl = (baseUrl: string): boolean => {
+  try {
+    const parsed = new URL(baseUrl);
+    return (
+      parsed.host === 'generativelanguage.googleapis.com' &&
+      !parsed.pathname.includes('/openai')
+    );
+  } catch (ignored) {
+    return false;
+  }
+};
+
 export const testAiConnection = async (config: {
   baseUrl: string,
   apiKey: string,
@@ -241,36 +274,90 @@ export const testAiConnection = async (config: {
       latencyMs,
     };
   } catch (error) {
+    let message = describeAiError(error, baseUrl);
+    // When the model name is wrong (404), try to help the user by listing
+    // what the endpoint actually offers.
+    if (error && error.response && error.response.status === 404) {
+      try {
+        const models = await fetchAvailableModels({
+          baseUrl: config.baseUrl,
+          apiKey: config.apiKey,
+        });
+        if (models.length > 0) {
+          message += `\nModels available on this endpoint: ${models
+            .slice(0, 8)
+            .join(', ')}${models.length > 8 ? `, … (+${models.length - 8} more)` : ''}`;
+        }
+      } catch (ignored) {
+        // Model discovery failed too — the original error is enough.
+      }
+    }
     return {
       success: false,
-      message: describeAiError(error, baseUrl),
+      message,
     };
   }
 };
 
 /**
- * Fetch available models from OpenAI-compatible /models endpoint.
+ * Fetch the model list from any OpenAI-compatible endpoint (or the Gemini
+ * native API). Throws with an actionable message on failure — callers can
+ * display exactly why discovery did not work.
  */
 export const fetchAvailableModels = async (config: {
   baseUrl: string,
   apiKey: string,
 }): Promise<Array<string>> => {
   const baseUrl = sanitizeBaseUrl(config.baseUrl);
-  try {
-    const headers: { [string]: string } = {};
-    if (config.apiKey && config.apiKey.trim().length > 0) {
-      headers['Authorization'] = `Bearer ${config.apiKey.trim()}`;
+  const headers: { [string]: string } = {};
+  const apiKey = (config.apiKey || '').trim();
+  if (apiKey) {
+    headers['Authorization'] = `Bearer ${apiKey}`;
+  }
+
+  if (isGeminiNativeBaseUrl(baseUrl)) {
+    // Gemini native API: GET {base}/models?key=... → { models: [{ name: "models/..." }] }
+    const separator = baseUrl.includes('?') ? '&' : '?';
+    const response = await axios.get(
+      `${baseUrl}/models${separator}key=${encodeURIComponent(apiKey)}`,
+      { timeout: 12000 }
+    );
+    const models = parseModelsResponseData(response.data);
+    if (models.length === 0) {
+      throw new Error(
+        'Google replied, but no models were listed for this API key. Check that the key is a valid Google AI Studio key (starts with "AIza").'
+      );
     }
+    return models;
+  }
+
+  try {
     const response = await axios.get(`${baseUrl}/models`, {
       headers,
-      timeout: 8000,
+      timeout: 12000,
     });
-    if (response.data && Array.isArray(response.data.data)) {
-      return response.data.data.map(m => m.id).filter(Boolean);
+    const models = parseModelsResponseData(response.data);
+    if (models.length === 0) {
+      throw new Error(
+        'The endpoint answered but listed no models. Type the model name manually (e.g. gpt-4o, glm-4.7-flash, llama-3.3-70b-versatile).'
+      );
     }
-    return [];
-  } catch (err) {
-    return [];
+    return models;
+  } catch (error) {
+    if (error && error.message && error.message.includes('listed no models')) {
+      throw error;
+    }
+    // Some providers reject the Bearer header but accept ?key= — retry once.
+    if (error && error.response && error.response.status === 401 && apiKey) {
+      const separator = baseUrl.includes('?') ? '&' : '?';
+      const response = await axios.get(
+        `${baseUrl}/models${separator}key=${encodeURIComponent(apiKey)}`,
+        { timeout: 12000 }
+      );
+      const models = parseModelsResponseData(response.data);
+      if (models.length > 0) return models;
+    }
+    throw new Error(describeAiError(error, baseUrl));
   }
 };
 

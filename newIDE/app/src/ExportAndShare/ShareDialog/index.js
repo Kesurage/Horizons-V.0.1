@@ -4,15 +4,10 @@ import * as React from 'react';
 import Dialog from '../../UI/Dialog';
 import HelpButton from '../../UI/HelpButton';
 import FlatButton from '../../UI/FlatButton';
-import BuildsDialog from '../Builds/BuildsDialog';
-import AuthenticatedUserContext from '../../Profile/AuthenticatedUserContext';
 import PublishHome from './PublishHome';
 import { type ExportPipeline } from '../ExportPipeline.flow';
 import { Tabs } from '../../UI/Tabs';
-import InviteHome from './InviteHome';
 import { useResponsiveWindowSize } from '../../UI/Responsive/ResponsiveWindowMeasurer';
-import TextButton from '../../UI/TextButton';
-import useAlertDialog from '../../UI/Alert/useAlertDialog';
 import PreferencesContext from '../../MainFrame/Preferences/PreferencesContext';
 import { type FileMetadata, type StorageProvider } from '../../ProjectsStorage';
 import { useOnlineStatus } from '../../Utils/OnlineStatus';
@@ -33,26 +28,29 @@ export type ExporterKey =
   | 'electronexport'
   | 'cordovaexport';
 
+// Horizons: the online build services (gd.games publishing, cloud packaging
+// of Android/iOS/Windows/Linux, Facebook Instant Games) were removed — only
+// local/offline exporters remain reachable from this mapping.
 const exporterSectionMapping: {
   [key: ExporterSection]: { [key: ExporterSubSection]: ?ExporterKey },
 } = {
   browser: {
-    online: 'onlinewebexport',
+    online: null,
     offline: 'webexport',
-    facebook: 'facebookinstantgamesexport',
+    facebook: null,
   },
   desktop: {
-    online: 'onlineelectronexport',
+    online: null,
     offline: 'electronexport',
     facebook: null,
   },
   android: {
-    online: 'onlinecordovaexport',
+    online: null,
     offline: 'cordovaexport',
     facebook: null,
   },
   ios: {
-    online: 'onlinecordovaiosexport',
+    online: null,
     offline: 'cordovaexport',
     facebook: null,
   },
@@ -144,40 +142,15 @@ const ShareDialog = ({
   ]);
   const isOnline = useOnlineStatus();
 
-  const [buildsDialogOpen, setBuildsDialogOpen] = React.useState<boolean>(
-    false
-  );
-  const [
-    isNavigationDisabled,
-    setIsNavigationDisabled,
-  ] = React.useState<boolean>(false);
-
-  const authenticatedUser = React.useContext(AuthenticatedUserContext);
-  const { showAlert } = useAlertDialog();
-
   const gameAndBuildsManager = useGameAndBuildsManager({
     project,
     onGameRegistered: gamesList.fetchGames,
   });
 
-  const openBuildDialog = () => {
-    if (!gameAndBuildsManager.game) {
-      const title = t`Cannot see the exports`;
-      const message =
-        gameAndBuildsManager.gameAvailabilityError === 'not-found'
-          ? t`Register or publish your game first to see its exports.`
-          : gameAndBuildsManager.gameAvailabilityError === 'not-owned'
-          ? t`You are not the owner of this game, ask the owner to add you as an owner to see its exports.`
-          : t`Either this game is not registered or you are not its owner, so you cannot see its builds.`;
-
-      showAlert({
-        title,
-        message,
-      });
-      return;
-    }
-    setBuildsDialogOpen(true);
-  };
+  const [
+    isNavigationDisabled,
+    setIsNavigationDisabled,
+  ] = React.useState<boolean>(false);
 
   const exporters = React.useMemo(
     () => [
@@ -222,21 +195,8 @@ const ShareDialog = ({
           exporter ? (
             <HelpButton key="help" helpPagePath={exporter.helpPage} />
           ) : null,
-          <TextButton
-            key="exports"
-            label={
-              isMobile ? <Trans>Exports</Trans> : <Trans>See all exports</Trans>
-            }
-            onClick={openBuildDialog}
-            disabled={isNavigationDisabled || !isOnline}
-          />,
         ].filter(Boolean)
-      : [
-          <HelpButton
-            key="help"
-            helpPagePath="/collaboration/invite-collaborators"
-          />,
-        ];
+      : [];
 
   return (
     <Dialog
@@ -253,8 +213,8 @@ const ShareDialog = ({
       open
       fixedContent={
         <Tabs
-          value={currentTab}
-          onChange={setCurrentTab}
+          value={'publish'}
+          onChange={() => {}}
           options={[
             {
               value: 'publish',
@@ -262,26 +222,13 @@ const ShareDialog = ({
               id: 'publish-tab',
               disabled: isNavigationDisabled,
             },
-            {
-              value: 'invite',
-              label: <Trans>Invite</Trans>,
-              id: 'invite-tab',
-              disabled: isNavigationDisabled,
-            },
           ]}
         />
       }
       flexColumnBody
     >
-      {currentTab === 'invite' && (
-        <InviteHome
-          cloudProjectId={
-            storageProvider.internalName === 'Cloud' && fileMetadata
-              ? fileMetadata.fileIdentifier
-              : null
-          }
-        />
-      )}
+      {/* Horizons: the "Invite" (collaboration) tab was removed —
+          it requires GDevelop cloud accounts. */}
       {currentTab === 'publish' && (
         <PublishHome
           project={project}
@@ -298,15 +245,6 @@ const ShareDialog = ({
           chosenSubSection={chosenExporterSubSection}
           allExportersRequireOnline={allExportersRequireOnline}
           showOnlineWebExporterOnly={showOnlineWebExporterOnly}
-        />
-      )}
-      {gameAndBuildsManager.game && (
-        <BuildsDialog
-          open={buildsDialogOpen}
-          onClose={() => setBuildsDialogOpen(false)}
-          authenticatedUser={authenticatedUser}
-          game={gameAndBuildsManager.game}
-          onGameUpdated={gameAndBuildsManager.setGame}
         />
       )}
     </Dialog>

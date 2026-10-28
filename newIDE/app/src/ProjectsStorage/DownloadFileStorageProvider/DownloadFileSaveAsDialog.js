@@ -11,6 +11,7 @@ import {
   BlobDownloadUrlHolder,
   openBlobDownloadUrl,
 } from '../../Utils/BlobDownloadUrlHolder';
+import { saveBlobToUserChosenPath } from '../../Utils/SaveFilePicker';
 import PlaceholderLoader from '../../UI/PlaceholderLoader';
 import { serializeToJSObject } from '../../Utils/Serializer';
 import { showErrorBox } from '../../UI/Messages/MessageBox';
@@ -270,9 +271,16 @@ export default function DownloadFileSaveAsDialog({
               {blobDownloadUrl => (
                 <RaisedButton
                   primary
-                  onClick={() =>
-                    openBlobDownloadUrl(blobDownloadUrl, 'gdevelop-game.zip')
-                  }
+                  onClick={async () => {
+                    // Horizons: save to the folder the user chooses.
+                    const result = await saveBlobToUserChosenPath(
+                      zippedProjectBlob,
+                      'gdevelop-game.zip'
+                    );
+                    if (result.savedToUserPath) return;
+                    if (!result.filename) return; // user cancelled
+                    openBlobDownloadUrl(blobDownloadUrl, 'gdevelop-game.zip');
+                  }}
                   label={
                     <Trans>Download the compressed game and resources</Trans>
                   }

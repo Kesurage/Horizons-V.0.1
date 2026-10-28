@@ -64,26 +64,14 @@ const SubscriptionChecker: React.ComponentType<{
     );
 
     const checkUserHasSubscription = () => {
-      if (
-        hasValidSubscriptionPlan(authenticatedUser.subscription) ||
-        (isNotShownDuringInAppTutorial && currentlyRunningInAppTutorial)
-      ) {
-        setDialogOpen(false);
-        return true;
-      }
-
-      if (isNativeMobileApp()) {
-        // Would present App Store screen.
-      } else {
-        setDialogOpen(true);
-        sendSubscriptionCheckDialogShown({ mode, id });
-      }
-
-      return false;
+      // Horizons: everything that was subscription-gated is free here —
+      // no paywall, no upsell dialog.
+      setDialogOpen(false);
+      return true;
     };
 
     const hasUserSubscription = () => {
-      return hasValidSubscriptionPlan(authenticatedUser.subscription);
+      return true;
     };
 
     React.useImperativeHandle(ref, () => ({

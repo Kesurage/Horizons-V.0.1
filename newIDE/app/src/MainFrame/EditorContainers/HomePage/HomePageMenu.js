@@ -104,20 +104,17 @@ export const getTabsToDisplay = ({
 }: {|
   limits: ?Limits,
 |}): HomePageMenuTab[] => {
-  const displayPlayTab =
-    !limits ||
-    !(
-      limits.capabilities.classrooms &&
-      limits.capabilities.classrooms.hidePlayTab
-    );
+  // Horizons: the "Play" (gd.games platform) and "Teach" (classroom service)
+  // tabs were removed — they are GDevelop account services. The Learn tab
+  // (free tutorials) and the Shop tab (asset/extension downloads) stay.
+  const displayPlayTab = false;
   const displayShopTab =
     !limits ||
     !(
       limits.capabilities.classrooms &&
       limits.capabilities.classrooms.hidePremiumProducts
     );
-  const displayTeachTab =
-    !shouldHideClassroomTab(limits) && !isNativeMobileApp();
+  const displayTeachTab = false;
   // $FlowFixMe[incompatible-type]
   const tabs: HomeTab[] = [
     'learn',

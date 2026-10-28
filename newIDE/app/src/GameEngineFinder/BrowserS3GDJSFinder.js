@@ -53,28 +53,52 @@ export const findGDJS = (
     gdjsRoot = `http://localhost:5002`;
   }
 
-  return Promise.all(
-    filesToDownload[fileSet].map(relativeFilePath => {
-      const url = gdjsRoot + relativeFilePath;
-
-      // Don't do any caching, rely on the browser cache only.
-      return fetch(url).then(response => {
-        if (!response.ok) {
-          console.error(`Error while downloading "${url}"`, response);
-          throw new Error(
-            `Error while downloading "${url}" (status: ${response.status})`
-          );
-        }
-        return response.text().then(text => ({
-          filePath: url,
-          text,
-        }));
+  // Horizons: prefer the GDJS runtime bundled with the app itself (works
+  // fully offline, e.g. inside the Android APK). The build copies
+  // `resources/GDJS/Runtime` next to the app as `/Runtime`. If it's not
+  // there (hosted web-app without the runtime folder), fall back to the CDN.
+  const probeLocalRuntime = async (): Promise<void> => {
+    try {
+      const probe = await fetch(`${window.location.origin}/Runtime/index.html`, {
+        method: 'HEAD',
       });
+      if (probe.ok) {
+        gdjsRoot = window.location.origin;
+        console.info('[BrowserS3GDJSFinder] Using the locally bundled GDJS runtime.');
+      }
+    } catch (ignored) {
+      // Not available locally: keep the CDN root.
+    }
+  };
+
+  const prepareRoot = Window.isDev()
+    ? Promise.resolve()
+    : probeLocalRuntime();
+
+  return prepareRoot.then(() =>
+    Promise.all(
+      filesToDownload[fileSet].map(relativeFilePath => {
+        const url = gdjsRoot + relativeFilePath;
+
+        // Don't do any caching, rely on the browser cache only.
+        return fetch(url).then(response => {
+          if (!response.ok) {
+            console.error(`Error while downloading "${url}"`, response);
+            throw new Error(
+              `Error while downloading "${url}" (status: ${response.status})`
+            );
+          }
+          return response.text().then(text => ({
+            filePath: url,
+            text,
+          }));
+        });
+      })
+    ).then(filesContent => {
+      return {
+        gdjsRoot,
+        filesContent,
+      };
     })
-  ).then(filesContent => {
-    return {
-      gdjsRoot,
-      filesContent,
-    };
-  });
+  );
 };

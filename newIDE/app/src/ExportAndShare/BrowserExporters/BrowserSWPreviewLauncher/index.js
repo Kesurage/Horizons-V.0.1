@@ -16,7 +16,7 @@ import {
 } from '../BrowserPreview/BrowserPreviewDebuggerServer';
 import Window from '../../../Utils/Window';
 import { getGDevelopResourceJwtToken } from '../../../Utils/GDevelopServices/Project';
-import { isNativeMobileApp } from '../../../Utils/Platform';
+import { isNativeMobileApp, isRunningInCapacitor } from '../../../Utils/Platform';
 import { getIDEVersionWithHash } from '../../../Version';
 import {
   getBrowserSWPreviewBaseUrl,
@@ -24,6 +24,7 @@ import {
 } from './BrowserSWPreviewIndexedDB';
 import { setEmbeddedGameFramePreviewLocation } from '../../../EmbeddedGame/EmbeddedGameFrame';
 import { immediatelyOpenNewPreviewWindow } from '../BrowserPreview/BrowserPreviewWindow';
+import PreviewOverlayDialog from '../BrowserPreview/PreviewOverlayDialog';
 const gd: libGDevelop = global.gd;
 
 let nextPreviewId = 1;
@@ -71,6 +72,7 @@ const prepareExporter = async ({
 
 type State = {|
   error: ?Error,
+  overlayPreview: ?{| location: string, reloadKey: number |},
 |};
 
 export default class BrowserSWPreviewLauncher extends React.Component<
@@ -79,19 +81,36 @@ export default class BrowserSWPreviewLauncher extends React.Component<
 > {
   canDoNetworkPreview = (): any => false;
 
+  // When no popup window could be opened (blocked by the browser, or running
+  // in the Horizons app shell), previews are displayed in the in-app overlay.
+  overlayPreviewFallback: boolean = false;
+  overlayIframeWindow: any = null;
+
   // $FlowFixMe[missing-local-annot]
   state = {
     error: null,
+    overlayPreview: null,
   };
 
   closeAllPreviews = () => {
     // This will also close the preview windows themselves.
     browserPreviewDebuggerServer.closeAllConnections();
+    this.overlayIframeWindow = null;
+    this.setState({
+      overlayPreview: null,
+    });
   };
 
   immediatelyPreparePreviewWindows = (
     options: PreparePreviewWindowsOptions
   ): any => {
+    // In the Horizons app shell (Capacitor WebView), window.open can never
+    // display a real window — use the in-app overlay for previews.
+    if (isRunningInCapacitor()) {
+      this.overlayPreviewFallback = true;
+      return [];
+    }
+
     const debuggerIds = options.isForInGameEdition
       ? this.getPreviewDebuggerServer().getExistingEmbeddedGameFrameDebuggerIds()
       : this.getPreviewDebuggerServer().getExistingPreviewDebuggerIds();
@@ -113,6 +132,17 @@ export default class BrowserSWPreviewLauncher extends React.Component<
               return null;
             }
           }).filter(Boolean);
+
+    if (
+      !options.isForInGameEdition &&
+      options.numberOfWindows > 0 &&
+      previewWindows.length === 0
+    ) {
+      console.warn(
+        '[BrowserSWPreviewLauncher] No preview window could be opened - previews will be shown inside the editor instead.'
+      );
+      this.overlayPreviewFallback = true;
+    }
 
     return previewWindows;
   };
@@ -137,9 +167,12 @@ export default class BrowserSWPreviewLauncher extends React.Component<
       previewOptions
     );
 
-    const debuggerIds = previewOptions.isForInGameEdition
-      ? this.getPreviewDebuggerServer().getExistingEmbeddedGameFrameDebuggerIds()
-      : this.getPreviewDebuggerServer().getExistingPreviewDebuggerIds();
+    const useOverlayPreview =
+      isRunningInCapacitor() || this.overlayPreviewFallback;
+    const debuggerIds =
+      previewOptions.isForInGameEdition || useOverlayPreview
+        ? this.getPreviewDebuggerServer().getExistingEmbeddedGameFrameDebuggerIds()
+        : this.getPreviewDebuggerServer().getExistingPreviewDebuggerIds();
     const shouldHotReload = previewOptions.hotReload && !!debuggerIds.length;
 
     try {
@@ -354,13 +387,11 @@ export default class BrowserSWPreviewLauncher extends React.Component<
             } catch (e) {}
           }
         });
-      } else if (previewWindows) {
-        if (previewOptions.isForInGameEdition) {
-          setEmbeddedGameFramePreviewLocation({
-            previewIndexHtmlLocation: outputDir + '/index.html',
-          });
-        }
-
+      } else if (previewOptions.isForInGameEdition) {
+        setEmbeddedGameFramePreviewLocation({
+          previewIndexHtmlLocation: outputDir + '/index.html',
+        });
+      } else if (previewWindows && previewWindows.length > 0) {
         console.log(
           '[BrowserSWPreviewLauncher] Opening new preview window(s)...'
         );
@@ -395,9 +426,17 @@ export default class BrowserSWPreviewLauncher extends React.Component<
           });
         });
       } else {
-        throw new Error(
-          'Internal error: no preview windows to open and no hot reload to trigger.'
+        // No popup window is available (Horizons app shell, or the browser
+        // blocked window.open): show the preview inside the editor itself.
+        console.log(
+          '[BrowserSWPreviewLauncher] Showing the preview in the in-app preview overlay.'
         );
+        this.setState({
+          overlayPreview: {
+            location: outputDir + '/index.html',
+            reloadKey: Date.now(),
+          },
+        });
       }
 
       previewExportOptions.delete();
@@ -424,21 +463,50 @@ export default class BrowserSWPreviewLauncher extends React.Component<
   }
 
   render(): any {
-    const { error } = this.state;
+    const { error, overlayPreview } = this.state;
 
-    if (error) {
-      return (
-        <BrowserPreviewErrorDialog
-          error={error}
-          onClose={() =>
-            this.setState({
-              error: null,
-            })
-          }
-        />
-      );
-    }
-
-    return null;
+    return (
+      <React.Fragment>
+        {error && (
+          <BrowserPreviewErrorDialog
+            error={error}
+            onClose={() =>
+              this.setState({
+                error: null,
+              })
+            }
+          />
+        )}
+        {overlayPreview && (
+          <PreviewOverlayDialog
+            previewIndexHtmlLocation={overlayPreview.location}
+            reloadKey={overlayPreview.reloadKey}
+            onClose={() => {
+              if (this.overlayIframeWindow) {
+                try {
+                  this.getPreviewDebuggerServer().unregisterEmbeddedGameFrame(
+                    this.overlayIframeWindow
+                  );
+                } catch (ignored) {}
+              }
+              this.overlayIframeWindow = null;
+              this.setState({
+                overlayPreview: null,
+              });
+            }}
+            onIframeAvailable={(contentWindow: any) => {
+              this.overlayIframeWindow = contentWindow;
+              // Register the iframe so hot-reload and the debugger work
+              // exactly like for popup preview windows.
+              try {
+                this.getPreviewDebuggerServer().registerEmbeddedGameFrame(
+                  contentWindow
+                );
+              } catch (ignored) {}
+            }}
+          />
+        )}
+      </React.Fragment>
+    );
   }
 }
