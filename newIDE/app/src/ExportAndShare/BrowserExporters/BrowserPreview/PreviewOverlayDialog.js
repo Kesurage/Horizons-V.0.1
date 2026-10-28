@@ -1,9 +1,9 @@
 // @flow
 import * as React from 'react';
-import IconButton from '../../UI/IconButton';
-import CloseIcon from '../../UI/CustomSvgIcons/Close';
-import RefreshIcon from '../../UI/CustomSvgIcons/Refresh';
-import Text from '../../UI/Text';
+import IconButton from '../../../UI/IconButton';
+import CloseIcon from '../../../UI/CustomSvgIcons/Cross';
+import RefreshIcon from '../../../UI/CustomSvgIcons/Refresh';
+import Text from '../../../UI/Text';
 
 type Props = {|
   previewIndexHtmlLocation: string,
