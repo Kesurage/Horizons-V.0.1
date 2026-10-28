@@ -1,10 +1,14 @@
 // @flow
-import axios from 'axios';
 import type {
   AiRequestAssistantMessage,
   AiRequestMessageAssistantFunctionCall,
 } from '../Utils/GDevelopServices/Generation';
-import { sanitizeBaseUrl, getChatCompletionsUrl } from './UniversalAiClient';
+import {
+  chatCompletionWithFailover,
+  askSpecialist,
+  webSearch,
+  getProviderSlots,
+} from './MultiAiOrchestrator';
 
 export type UniversalAiConfig = {
   baseUrl: string,
@@ -648,6 +652,48 @@ export const UNIVERSAL_AI_TOOLS = [
       },
     },
   },
+  {
+    type: 'function',
+    function: {
+      name: 'ask_specialist',
+      description:
+        'Delegate a sub-task to the specialist AI of your team (e.g. Gemini). Use it for: analyzing images/video, complex project analysis, long-context reasoning, or when you need a second opinion. The specialist answers as text and cannot modify the project.',
+      parameters: {
+        type: 'object',
+        properties: {
+          task: {
+            type: 'string',
+            description:
+              'Precise, self-contained description of what the specialist should analyze or answer.',
+          },
+          details: {
+            type: 'string',
+            description:
+              'Optional data/code/context the specialist should work on (e.g. a JSON dump, an error message, a base64-free description of media).',
+          },
+        },
+        required: ['task'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'web_search',
+      description:
+        'Search the live web (via the Gemini google_search grounding of your AI team). Use it for up-to-date information: GDevelop updates, APIs, game design references, error troubleshooting.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: {
+            type: 'string',
+            description: 'The search query.',
+          },
+        },
+        required: ['query'],
+      },
+    },
+  },
 ];
 
 const AGENT_RULES = `
@@ -658,6 +704,7 @@ Rules:
 - ALWAYS inspect before you change: use inspect_* / describe_instances / read_scene_events to know the current state.
 - Make changes with the provided tools. One tool call at a time, in a logical order.
 - Use add_scene_events to create game logic: give a precise, self-contained description of conditions and actions (mention exact object names, variable names, and values).
+- You lead a small AI TEAM: you are the primary agent. For media analysis, deep analysis or a second opinion, delegate with ask_specialist. For up-to-date knowledge, use web_search. Prefer solving yourself; delegate only when it truly helps.
 - After finishing your changes, ALWAYS reply with a short summary of what you did in markdown, so the user can review.
 - If a tool call fails, read the error and adapt (wrong argument, missing scene, wrong behavior type...), then retry differently.
 - If the user asks a question without requesting changes, just answer — do not call tools.
@@ -949,8 +996,8 @@ export const convertOpenAiResponseToGDevelopMessages = (
 };
 
 /**
- * Core bridge: send the conversation to the custom OpenAI-compatible
- * provider and get back GDevelop-format messages.
+ * Core bridge: send the conversation through the Multi-AI team
+ * (rate-limit queue + failover) and get back GDevelop-format messages.
  */
 export const runUniversalAiTurn = async ({
   config,
@@ -967,14 +1014,6 @@ export const runUniversalAiTurn = async ({
   mode: 'chat' | 'agent' | 'orchestrator',
   existingHistoryOutput?: ?Array<any>,
 }): Promise<{ messages: Array<any> }> => {
-  const baseUrl = sanitizeBaseUrl(config.baseUrl); // keep for error messages
-  const headers: { [string]: string } = {
-    'Content-Type': 'application/json',
-  };
-  if (config.apiKey && config.apiKey.trim().length > 0) {
-    headers['Authorization'] = `Bearer ${config.apiKey.trim()}`;
-  }
-
   const chatMessages: Array<any> = [{ role: 'system', content: systemPrompt }];
 
   const historyOutput = historyGDevelopOutput || existingHistoryOutput || null;
@@ -990,21 +1029,36 @@ export const runUniversalAiTurn = async ({
 
   const useTools = mode !== 'chat';
 
-  const response = await axios.post(
-    getChatCompletionsUrl(config.baseUrl),
-    {
-      model: config.model || 'gpt-4o',
-      messages: chatMessages,
-      temperature:
-        typeof config.temperature === 'number' ? config.temperature : 0.7,
-      ...(useTools ? { tools: UNIVERSAL_AI_TOOLS, tool_choice: 'auto' } : {}),
-    },
-    { headers, timeout: 120000 }
-  );
+  // Prefer the team slot matching the explicitly configured endpoint
+  // (falls back to the default team order when not found).
+  let preferSlotId = null;
+  try {
+    const target = (config.baseUrl || '').trim().toLowerCase();
+    const slots = getProviderSlots();
+    const match = slots.find(
+      slot =>
+        slot.baseUrl &&
+        slot.baseUrl.trim().toLowerCase() === target &&
+        (!slot.apiKey || slot.apiKey.trim().length === 0
+          ? !!config.apiKey
+          : true)
+    );
+    preferSlotId = match ? match.id : null;
+  } catch (ignored) {
+    preferSlotId = null;
+  }
+
+  const result = await chatCompletionWithFailover({
+    messages: chatMessages,
+    tools: useTools ? UNIVERSAL_AI_TOOLS : null,
+    temperature:
+      typeof config.temperature === 'number' ? config.temperature : 0.7,
+    preferSlotId,
+  });
 
   const responseMessage =
-    response.data && response.data.choices && response.data.choices[0]
-      ? response.data.choices[0].message
+    result.data && result.data.choices && result.data.choices[0]
+      ? result.data.choices[0].message
       : null;
   if (!responseMessage) {
     throw new Error('The AI provider returned an unexpected response.');
@@ -1014,3 +1068,5 @@ export const runUniversalAiTurn = async ({
     messages: convertOpenAiResponseToGDevelopMessages(responseMessage),
   };
 };
+
+export { askSpecialist, webSearch };

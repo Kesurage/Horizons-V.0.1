@@ -15,6 +15,7 @@ import ExtensionIcon from '../UI/CustomSvgIcons/Extension';
 import SearchIcon from '../UI/CustomSvgIcons/Search';
 import ProjectTitlebar from './ProjectTitlebar';
 import PreferencesDialog from './Preferences/PreferencesDialog';
+import FileManagerDialog from '../ProjectsStorage/FileManagerDialog';
 import AboutDialog from './AboutDialog';
 import ProjectManager from '../ProjectManager';
 import LoaderModal from '../UI/LoaderModal';
@@ -433,6 +434,10 @@ const MainFrame = (props: Props): React.MixedElement => {
   const [
     newProjectSetupDialogOpen,
     setNewProjectSetupDialogOpen,
+  ] = React.useState<boolean>(false);
+  const [
+    fileManagerDialogOpen,
+    setFileManagerDialogOpen,
   ] = React.useState<boolean>(false);
 
   const [isProjectOpening, setIsProjectOpening] = React.useState<boolean>(
@@ -5025,6 +5030,7 @@ const MainFrame = (props: Props): React.MixedElement => {
     onOpenLanguage: () => openLanguageDialog(true),
     onOpenProfile: onOpenProfileDialog,
     onOpenAskAi: openAskAi,
+    onOpenFileManager: () => setFileManagerDialogOpen(true),
     setElectronUpdateStatus: setElectronUpdateStatus,
   };
 
@@ -5380,6 +5386,13 @@ const MainFrame = (props: Props): React.MixedElement => {
             openLanguageDialog(false);
             if (options.languageDidChange) _languageDidChange();
           }}
+        />
+      )}
+      {fileManagerDialogOpen && (
+        <FileManagerDialog
+          open
+          onClose={() => setFileManagerDialogOpen(false)}
+          project={currentProject}
         />
       )}
       {aboutDialogOpen && (

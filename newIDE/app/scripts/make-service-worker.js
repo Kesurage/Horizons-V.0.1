@@ -2,8 +2,26 @@ const fs = require('fs');
 const path = require('path');
 const shell = require('shelljs');
 const workboxBuild = require('workbox-build');
-const buildPath = '../public';
 const VersionMetadata = require('../src/Version/VersionMetadata');
+
+/**
+ * When SW_BUILD_DIR is set (e.g. `SW_BUILD_DIR=../build node make-service-worker.js`
+ * run from scripts/ AFTER `react-app-rewired build`), the service worker is
+ * generated against the real build output, so the precache manifest also
+ * includes the hashed static assets. Otherwise, keep the legacy behavior
+ * (pre-build generation in public/).
+ */
+const buildPath = process.env.SW_BUILD_DIR || '../public';
+const swDestPath = process.env.SW_BUILD_DIR
+  ? path.join(buildPath, 'service-worker.js')
+  : '../public/service-worker.js';
+const additionalGlobPatterns = process.env.SW_BUILD_DIR
+  ? [
+      'static/js/*.js', // Hashed app bundles.
+      'static/css/*.css',
+      'static/media/*',
+    ]
+  : [];
 
 /**
  * Remove files created by create-react-app default service worker.
@@ -46,7 +64,7 @@ const buildSW = () => {
   return workboxBuild
     .injectManifest({
       swSrc: 'service-worker-template/service-worker-template.js',
-      swDest: '../public/service-worker.js',
+      swDest: swDestPath,
       globDirectory: buildPath,
       globPatterns: [
         // Application:
@@ -57,6 +75,7 @@ const buildSW = () => {
         'static/js/!local-app*.js', // Exclude electron app.
         'static/js/Resource3DPreview.worker.*.js', // Include the 3D preview worker
         'static/js/BackgroundSerializer.worker.*.js', // Include the serializer worker
+        ...additionalGlobPatterns,
         // ...But not libGD.js/wasm (there are cached with their URL
         // query string that depends on the VersionMetadata, see below).
 
@@ -86,7 +105,7 @@ const buildSW = () => {
     .then(({ count, size, warnings }) => {
       if (
         !replaceInFile(
-          '../public/service-worker.js',
+          swDestPath,
           'VersionMetadata = {}',
           'VersionMetadata = ' + JSON.stringify(VersionMetadata)
         )

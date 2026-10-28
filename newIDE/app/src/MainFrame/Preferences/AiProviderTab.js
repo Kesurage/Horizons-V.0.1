@@ -16,6 +16,8 @@ import {
   fetchAvailableModels,
   sanitizeBaseUrl,
 } from '../../AiGeneration/UniversalAiClient';
+import MultiAiTeamDialog from '../../AiGeneration/MultiAiTeamDialog';
+import { countReadySlots } from '../../AiGeneration/MultiAiOrchestrator';
 import TuneIcon from '../../UI/CustomSvgIcons/Tune';
 import CheckCircleIcon from '../../UI/CustomSvgIcons/CheckCircle';
 import RefreshIcon from '../../UI/CustomSvgIcons/Refresh';
@@ -25,6 +27,10 @@ export const AiProviderTab = (): React.Node => {
   const { values } = preferences;
 
   const [testing, setTesting] = React.useState(false);
+  const [showTeamDialog, setShowTeamDialog] = React.useState(false);
+  const [teamReadyCount, setTeamReadyCount] = React.useState(
+    countReadySlots()
+  );
   const [testResult, setTestResult] = React.useState<?{|
     success: boolean,
     message: string,
@@ -105,8 +111,28 @@ export const AiProviderTab = (): React.Node => {
       <Text size="body">
         <Trans>
           Connect any OpenAI-compatible AI provider or local offline model
-          (Ollama, LM Studio, OpenAI, OpenRouter, Groq, DeepSeek). GDevelop
-          proprietary cloud subscriptions are completely bypassed.
+          (GLM 4.7 Flash from Z.ai, Gemini, Groq, OpenAI, OpenRouter,
+          DeepSeek, Ollama, LM Studio). GDevelop proprietary cloud
+          subscriptions are completely bypassed.
+        </Trans>
+      </Text>
+
+      <Line justifyContent="flex-start" noMargin>
+        <RaisedButton
+          primary
+          label={<Trans>Configure Multi-AI Team (recommended)</Trans>}
+          onClick={() => {
+            setTeamReadyCount(countReadySlots());
+            setShowTeamDialog(true);
+          }}
+        />
+      </Line>
+      <Text size="body-small">
+        <Trans>
+          {teamReadyCount} provider(s) ready. The team queues requests on
+          free-tier rate limits (GLM ~40/min, Gemini ~15/min) and fails over
+          automatically. Gemini also powers web search and media analysis for
+          the primary agent.
         </Trans>
       </Text>
 
@@ -271,6 +297,14 @@ export const AiProviderTab = (): React.Node => {
           requests to `http://localhost:11434/v1`.
         </Trans>
       </AlertMessage>
+
+      <MultiAiTeamDialog
+        open={showTeamDialog}
+        onClose={() => {
+          setShowTeamDialog(false);
+          setTeamReadyCount(countReadySlots());
+        }}
+      />
     </ColumnStackLayout>
   );
 };

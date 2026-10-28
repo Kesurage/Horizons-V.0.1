@@ -24,6 +24,10 @@ import {
 } from '.';
 import PixiResourcesLoader from '../ObjectsRendering/PixiResourcesLoader';
 import { type EnsureExtensionInstalledOptions } from '../AiGeneration/UseEnsureExtensionInstalled';
+import {
+  webSearch,
+  askSpecialist,
+} from '../AiGeneration/MultiAiOrchestrator';
 
 type ProcessEditorFunctionCallsOptions = {|
   project: ?gdProject,
@@ -141,6 +145,40 @@ export const processEditorFunctionCalls = async ({
             message: `Invalid arguments for function: ${name}.`,
           },
         });
+        continue;
+      }
+
+      // Horizons Multi-AI team: handle orchestrator-native tools locally
+      // (web search + specialist delegation). These are not editor functions.
+      if (name === 'web_search' || name === 'ask_specialist') {
+        try {
+          const toolOutputText =
+            name === 'web_search'
+              ? await webSearch(args.query || '')
+              : await askSpecialist({
+                  task: args.task || '',
+                  details: args.details || null,
+                });
+          results.push({
+            status: 'finished',
+            call_id,
+            success: true,
+            output: {
+              message: toolOutputText,
+            },
+          });
+        } catch (toolError) {
+          results.push({
+            status: 'finished',
+            call_id,
+            success: false,
+            output: {
+              message:
+                (toolError && toolError.message) ||
+                `Tool ${name} failed unexpectedly.`,
+            },
+          });
+        }
         continue;
       }
 

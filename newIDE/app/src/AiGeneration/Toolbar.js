@@ -10,6 +10,11 @@ import RaisedButton from '../UI/RaisedButton';
 import { Tooltip } from '@material-ui/core';
 import PreferencesContext from '../MainFrame/Preferences/PreferencesContext';
 import { AI_PRESETS } from './UniversalAiClient';
+import {
+  subscribeAiStatus,
+  getTeamSummary,
+  type AiStatusEvent,
+} from './MultiAiOrchestrator';
 
 type Props = {|
   onStartNewChat: () => void,
@@ -20,7 +25,8 @@ type Props = {|
 
 /**
  * Small chip showing the AI provider/model currently used by the panel.
- * Clicking it opens the AI settings dialog. Turns amber when unconfigured.
+ * Subscribes to the Multi-AI orchestrator status bus so it reflects
+ * queueing, failover and delegation live. Clicking opens AI settings.
  */
 const AiStatusChip = ({
   onOpenAiSettings,
@@ -30,20 +36,51 @@ const AiStatusChip = ({
   const preferences = React.useContext(PreferencesContext);
   const { values } = preferences;
 
+  const [lastEvent, setLastEvent] = React.useState<?AiStatusEvent>(null);
+  const [teamSummary, setTeamSummary] = React.useState(getTeamSummary);
+
+  React.useEffect(() => {
+    const unsubscribe = subscribeAiStatus(event => {
+      setLastEvent(event);
+      setTeamSummary(getTeamSummary());
+    });
+    return unsubscribe;
+  }, []);
+
   const baseUrl = values.aiBaseUrl || 'https://api.openai.com/v1';
-  const model = values.aiModel || 'gpt-4o';
+  const readySlots = teamSummary.filter(slot => slot.ready);
+  const readyLabels = readySlots.map(slot => slot.label.split(' (')[0]);
+  const providerLabel = readySlots.length
+    ? readyLabels.join(' + ')
+    : 'No AI key';
   const presetKey = Object.keys(AI_PRESETS).find(
     key => AI_PRESETS[key].baseUrl === baseUrl
   );
-  const providerLabel = presetKey
+  const legacyLabel = presetKey
     ? AI_PRESETS[presetKey].label.replace(/ \(.*\)$/, '')
     : 'Custom';
-  const isLocal =
-    baseUrl.includes('localhost') || baseUrl.includes('127.0.0.1');
+  const displayLabel = readySlots.length ? providerLabel : legacyLabel;
+
+  const isBusy =
+    lastEvent &&
+    ['request-start', 'queued', 'delegation', 'web-search'].includes(
+      lastEvent.kind
+    );
+  const dotColor = !readySlots.length
+    ? '#e53935'
+    : isBusy
+    ? '#fb8c00'
+    : lastEvent && lastEvent.kind === 'team-exhausted'
+    ? '#e53935'
+    : '#2e7d32';
 
   return (
     <Tooltip
-      title={t`Provider: ${providerLabel} — Model: ${model} (${baseUrl}). Click to change AI settings.`}
+      title={
+        readySlots.length
+          ? t`AI team: ${readyLabels.join(' + ')} — rate limits queued, failover automatic. Click for settings.`
+          : t`No AI provider configured. Click to add your free GLM (Z.ai) / Gemini keys.`
+      }
     >
       <button
         onClick={onOpenAiSettings}
@@ -57,7 +94,7 @@ const AiStatusChip = ({
           padding: '2px 10px',
           cursor: 'pointer',
           fontSize: 12,
-          maxWidth: 220,
+          maxWidth: 240,
           overflow: 'hidden',
           textOverflow: 'ellipsis',
           whiteSpace: 'nowrap',
@@ -69,10 +106,12 @@ const AiStatusChip = ({
             height: 8,
             borderRadius: 999,
             flexShrink: 0,
-            background: isLocal ? '#2e7d32' : '#1565c0',
+            background: dotColor,
+            animation: isBusy ? 'gd-ai-pulse 1.2s infinite' : undefined,
           }}
         />
-        {providerLabel} · {model}
+        {displayLabel}
+        {lastEvent && isBusy ? ` · ${lastEvent.kind === 'queued' ? 'queued' : lastEvent.label}` : ''}
       </button>
     </Tooltip>
   );

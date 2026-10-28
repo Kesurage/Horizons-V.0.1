@@ -507,7 +507,7 @@ export const createAiRequest = async (
           text: `⚠️ **AI Provider Error**: ${describeAiError(
             err,
             config.baseUrl
-          )}\n\nFix it in **Preferences → AI Provider** or via the AI toolbar gear icon: check the Base URL, API key and model name (use "Test Connection" to verify instantly).`,
+          )}\n\nThe Multi-AI team (GLM + Gemini + fallbacks) could not complete this request. Fix it in **Preferences → AI Provider → Configure Multi-AI Team**: check each provider's API key and Base URL (use the per-provider "Test" button to verify instantly). Requests are queued automatically when a provider hits its free-tier rate limit.`,
           annotations: [],
         },
       ],

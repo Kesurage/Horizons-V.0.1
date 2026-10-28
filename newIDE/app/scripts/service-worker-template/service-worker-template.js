@@ -227,6 +227,23 @@ self.addEventListener('fetch', event => {
 self.addEventListener('install', event => {
   console.log('[ServiceWorker] Installing new service worker...');
 
+  // Pre-cache the Workbox runtime itself (loaded from a CDN below), so that
+  // the service worker keeps working fully offline even if the CDN is
+  // unreachable. Also bootstrap the app shell index.html.
+  const workboxUrl =
+    'https://storage.googleapis.com/workbox-cdn/releases/3.5.0/workbox-sw.js';
+  event.waitUntil(
+    caches
+      .open('workbox-cdn-cache')
+      .then(cache => cache.addAll([workboxUrl, './index.html']))
+      .catch(error => {
+        console.warn(
+          '[ServiceWorker] Could not pre-cache workbox runtime:',
+          error
+        );
+      })
+  );
+
   // Immediately install the new service worker, so it can then be activated
   // (see below).
   self.skipWaiting();
@@ -288,16 +305,31 @@ if (workbox) {
   });
 
   // Cache resources from GDevelop cloudfront server (CORS enabled).
+  // networkFirst keeps them fresh, but the cache copy makes game previews
+  // and asset-heavy projects work fully offline once played once.
   workbox.routing.registerRoute(
-    /https:\/\/resources\.gdevelop-app\.com\/.*$/,
+    /^https:\/\/(resources|asset-resources)\.gdevelop-app\.com\/.*$/,
     workbox.strategies.networkFirst({
       cacheName: 'gdevelop-resources-cache',
       plugins: [
         new workbox.expiration.Plugin({
-          maxEntries: 500,
+          maxEntries: 1000,
+          maxAgeSeconds: 30 * 24 * 60 * 60,
         }),
       ],
     })
+  );
+
+  // Asset marketplace API and user services stay online-only (never cached):
+  // the marketplace needs fresh data and the AI providers must never be
+  // answered from a cache.
+  workbox.routing.registerRoute(
+    /^https:\/\/(api|ai)\.gdevelop(-app)?\.io\/.*$/,
+    workbox.strategies.networkOnly()
+  );
+  workbox.routing.registerRoute(
+    /^https:\/\/([^/]*\.)?(z\.ai|openai\.com|groq\.com|openrouter\.ai|deepseek\.com|generativelanguage\.googleapis\.com)\/.*$/,
+    workbox.strategies.networkOnly()
   );
 
   // TODO: this should be useless?

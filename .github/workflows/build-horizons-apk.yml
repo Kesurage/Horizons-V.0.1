@@ -1,0 +1,168 @@
+name: Build Horizons APK
+
+# Builds the Horizons web editor and packages it as an installable Android APK
+# using Capacitor, then publishes it to GitHub Releases.
+# The APK is self-signed (keystore generated in CI) — sideload-ready.
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - Instance_panel-z_order
+    paths-ignore:
+      - '**.md'
+      - 'Core/**'
+      - 'GDJS/**'
+      - 'Extensions/**'
+      - 'ExtLibs/**'
+
+permissions:
+  contents: write
+
+jobs:
+  build-web:
+    name: Build Horizons web editor
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install editor dependencies
+        working-directory: newIDE/app
+        run: |
+          npm ci || npm install
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+          PUPPETEER_SKIP_DOWNLOAD: '1'
+
+      - name: Build web editor (downloads prebuilt libGD.js from upstream S3)
+        working-directory: newIDE/app
+        run: npm run build
+        env:
+          CI: 'false'
+          DISABLE_ESLINT_PLUGIN: 'true'
+          NODE_OPTIONS: --max-old-space-size=6144
+
+      - name: Regenerate service worker against real build output (full offline precache)
+        working-directory: newIDE/app/scripts
+        run: SW_BUILD_DIR=../build node make-service-worker.js
+
+      - name: Upload web build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-build
+          path: newIDE/app/build
+          retention-days: 7
+
+  build-apk:
+    name: Package APK with Capacitor
+    needs: build-web
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Download web build
+        uses: actions/download-artifact@v4
+        with:
+          name: web-build
+          path: web-build
+
+      - name: Create Capacitor project
+        run: |
+          mkdir -p capacitor-app
+          cd capacitor-app
+          npm init -y > /dev/null
+          npm install @capacitor/core@^6 @capacitor/cli@^6 @capacitor/android@^6 --no-audit --no-fund
+          mkdir -p www
+          cp -r ../web-build/* www/
+          npx cap init "Horizons" "com.kesurage.horizons" --web-dir www
+          npx cap add android
+          # Serve over https://localhost so web APIs (IndexedDB, crypto) work,
+          # route fetch through native to avoid any CORS issue with AI providers,
+          # and keep the screen active while the editor is open.
+          node -e "
+            const fs = require('fs');
+            const config = JSON.parse(fs.readFileSync('capacitor.config.json', 'utf8'));
+            config.server = { androidScheme: 'https', cleartext: false };
+            config.android = { allowMixedContent: false, webContentsDebuggingEnabled: true };
+            config.plugins = { CapacitorHttp: { enabled: true } };
+            config.backgroundColor = '#252525';
+            fs.writeFileSync('capacitor.config.json', JSON.stringify(config, null, 2));
+          "
+          npx cap sync android
+
+      - name: Generate signing keystore
+        working-directory: capacitor-app/android
+        run: |
+          keytool -genkeypair -v \
+            -keystore horizons-release.keystore \
+            -alias horizons \
+            -keyalg RSA -keysize 2048 -validity 10000 \
+            -storepass horizons2026 -keypass horizons2026 \
+            -dname "CN=Horizons, OU=Games, O=Kesurage, C=US"
+
+      - name: Build signed release APK
+        working-directory: capacitor-app/android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleRelease \
+            -Pandroid.injected.signing.store.file=$PWD/horizons-release.keystore \
+            -Pandroid.injected.signing.store.password=horizons2026 \
+            -Pandroid.injected.signing.key.alias=horizons \
+            -Pandroid.injected.signing.key.password=horizons2026 \
+            --no-daemon --stacktrace
+
+      - name: Rename APK
+        run: |
+          mkdir -p release
+          cp capacitor-app/android/app/build/outputs/apk/release/app-release.apk release/Horizons-v0.2.0.apk
+          ls -la release/
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: horizons-apk
+          path: release/Horizons-v0.2.0.apk
+          retention-days: 30
+
+      - name: Publish to GitHub Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v0.2.0
+          name: Horizons V.0.2 — offline editor + multi-AI
+          body: |
+            ## Horizons V.0.2 APK
+
+            Install: download `Horizons-v0.2.0.apk` on your Android device and open it (allow "install from unknown sources").
+
+            ### Highlights
+            - Full GDevelop/Horizons editor, 100% offline (all engine + editor files bundled)
+            - Multi-AI team: GLM 4.7 Flash (primary) + Gemini Flash (specialist: web search, media analysis, failover) + optional fallbacks
+            - Automatic rate-limit queueing and provider failover (GLM ~40 RPM, Gemini ~15 RPM free tiers)
+            - AI agent with tool calling: project editing, ask_specialist, web_search
+            - File manager (Files & workspace... in the File menu)
+            - Asset marketplace stays online when you want it; everything else works offline
+          draft: false
+          prerelease: false
+          files: release/Horizons-v0.2.0.apk
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

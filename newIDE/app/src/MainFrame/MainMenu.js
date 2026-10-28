@@ -51,6 +51,7 @@ export type MainMenuCallbacks = {|
   onOpenLanguage: (open?: boolean) => void,
   onOpenProfile: (open?: boolean) => void,
   onOpenAskAi: () => void,
+  onOpenFileManager: () => void,
   setElectronUpdateStatus: ElectronUpdateStatus => void,
 |};
 
@@ -79,6 +80,7 @@ export type MainMenuEvent =
   | 'main-menu-open-language'
   | 'main-menu-open-profile'
   | 'main-menu-open-ask-ai'
+  | 'main-menu-open-files'
   | 'update-status';
 
 const getMainMenuEventCallback = (
@@ -105,6 +107,7 @@ const getMainMenuEventCallback = (
     'main-menu-open-language': callbacks.onOpenLanguage,
     'main-menu-open-profile': callbacks.onOpenProfile,
     'main-menu-open-ask-ai': callbacks.onOpenAskAi,
+    'main-menu-open-files': callbacks.onOpenFileManager,
     'update-status': callbacks.setElectronUpdateStatus,
   };
 
@@ -178,6 +181,11 @@ export const buildMainMenuDeclarativeTemplate = ({
         onClickSendEvent: 'main-menu-invite-collaborators',
         enabled: !!project,
       },
+      {
+        label: i18n._(t`Files & workspace...`),
+        onClickSendEvent: 'main-menu-open-files',
+      },
+      { type: 'separator' },
       {
         label: i18n._(t`Export (web, iOS, Android)...`),
         accelerator: getElectronAccelerator(shortcutMap['EXPORT_GAME']),

@@ -16,6 +16,8 @@ import {
   testAiConnection,
   fetchAvailableModels,
 } from './UniversalAiClient';
+import MultiAiTeamDialog from './MultiAiTeamDialog';
+import { countReadySlots } from './MultiAiOrchestrator';
 import CheckCircleIcon from '../UI/CustomSvgIcons/CheckCircle';
 import RefreshIcon from '../UI/CustomSvgIcons/Refresh';
 
@@ -29,6 +31,8 @@ export const AiQuickSettingsDialog = ({ open, onClose }: Props): React.Node => {
   const { values } = preferences;
 
   const [testing, setTesting] = React.useState(false);
+  const [showTeamDialog, setShowTeamDialog] = React.useState(false);
+  const [teamReadyCount, setTeamReadyCount] = React.useState(0);
   const [testResult, setTestResult] = React.useState<?{|
     success: boolean,
     message: string,
@@ -38,6 +42,10 @@ export const AiQuickSettingsDialog = ({ open, onClose }: Props): React.Node => {
   const [availableModels, setAvailableModels] = React.useState<Array<string>>(
     []
   );
+
+  React.useEffect(() => {
+    if (open) setTeamReadyCount(countReadySlots());
+  }, [open]);
 
   if (!open) return null;
 
@@ -114,9 +122,21 @@ export const AiQuickSettingsDialog = ({ open, onClose }: Props): React.Node => {
         <Text size="body-small">
           <Trans>
             Quickly switch your AI model, endpoint, or API key. All calls go
-            directly from your browser.
+            directly from your browser — and automatically fail over between
+            your configured AI team members on rate limits.
           </Trans>
         </Text>
+
+        <RaisedButton
+          primary
+          label={<Trans>Multi-AI Team (GLM + Gemini + fallbacks)</Trans>}
+          onClick={() => setShowTeamDialog(true)}
+        />
+        {teamReadyCount > 0 && (
+          <Text size="body-small" noMargin>
+            <Trans>{teamReadyCount} AI provider(s) ready in your team.</Trans>
+          </Text>
+        )}
 
         <Text size="sub-title">
           <Trans>Presets</Trans>
@@ -246,6 +266,14 @@ export const AiQuickSettingsDialog = ({ open, onClose }: Props): React.Node => {
           </AlertMessage>
         )}
       </ColumnStackLayout>
+
+      <MultiAiTeamDialog
+        open={showTeamDialog}
+        onClose={() => {
+          setShowTeamDialog(false);
+          setTeamReadyCount(countReadySlots());
+        }}
+      />
     </Dialog>
   );
 };

@@ -5,6 +5,10 @@ import type {
   AiRequestAssistantMessage,
   AiRequestUserMessage,
 } from '../Utils/GDevelopServices/Generation';
+import {
+  chatCompletionWithFailover,
+  getProviderSlots,
+} from './MultiAiOrchestrator';
 
 export type UniversalAiConfig = {
   baseUrl: string,
@@ -32,6 +36,22 @@ export const AI_PRESETS: {
     requiresKey: boolean,
   },
 } = {
+  glm: {
+    label: 'GLM 4.7 Flash (Z.ai)',
+    baseUrl: 'https://api.z.ai/api/paas/v4',
+    model: 'glm-4.7-flash',
+    description:
+      'Z.ai GLM — agent-oriented workhorse, generous free tier (~40 req/min). Get a key at z.ai.',
+    requiresKey: true,
+  },
+  gemini: {
+    label: 'Gemini Flash (Google AI)',
+    baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
+    model: 'gemini-flash-latest',
+    description:
+      'Google AI Studio — free tier ~15 req/min, huge context, vision + web search specialist.',
+    requiresKey: true,
+  },
   ollama: {
     label: 'Ollama (Local Offline)',
     baseUrl: 'http://localhost:11434/v1',
@@ -198,7 +218,7 @@ export const testAiConnection = async (config: {
 
     const response = await axios.post(`${baseUrl}/chat/completions`, payload, {
       headers,
-      timeout: 15000,
+      timeout: 30000,
     });
 
     const latencyMs = Date.now() - startTime;
@@ -268,14 +288,6 @@ export const executeUniversalAiChat = async ({
   config: UniversalAiConfig,
   contextMetadata?: ?string,
 }): Promise<{ assistantText: string, requestId: string }> => {
-  const baseUrl = sanitizeBaseUrl(config.baseUrl);
-  const headers: { [string]: string } = {
-    'Content-Type': 'application/json',
-  };
-  if (config.apiKey && config.apiKey.trim().length > 0) {
-    headers['Authorization'] = `Bearer ${config.apiKey.trim()}`;
-  }
-
   const systemMessage = {
     role: 'system',
     content: config.customSystemPrompt || DEFAULT_AI_SYSTEM_PROMPT,
@@ -317,22 +329,22 @@ export const executeUniversalAiChat = async ({
     content: userPrompt,
   });
 
-  const response = await axios.post(
-    `${baseUrl}/chat/completions`,
-    {
-      model: config.model || 'gpt-4o',
-      messages: chatMessages,
-      temperature:
-        typeof config.temperature === 'number' ? config.temperature : 0.7,
-    },
-    {
-      headers,
-      timeout: 60000,
-    }
-  );
+  // Route through the Multi-AI orchestrator: rate-limit queue + failover
+  // across the whole configured team (GLM → Gemini → fallbacks).
+  const data = await chatCompletionWithFailover({
+    messages: chatMessages,
+    temperature:
+      typeof config.temperature === 'number' ? config.temperature : 0.7,
+    tools: null,
+    preferSlotId: getPreferredSlotIdForConfig(config),
+  });
 
   const assistantText =
-    response.data?.choices?.[0]?.message?.content ||
+    (data.data &&
+      data.data.choices &&
+      data.data.choices[0] &&
+      data.data.choices[0].message &&
+      data.data.choices[0].message.content) ||
     'No response received from AI model.';
   const requestId = 'airq_univ_' + Date.now();
 
@@ -340,6 +352,23 @@ export const executeUniversalAiChat = async ({
     assistantText,
     requestId,
   };
+};
+
+/**
+ * When the caller passes an explicit single-provider config, prefer the
+ * matching configured team slot for that endpoint (if any).
+ */
+export const getPreferredSlotIdForConfig = (config: UniversalAiConfig): ?string => {
+  try {
+    const slots = getProviderSlots();
+    const target = sanitizeBaseUrl(config.baseUrl || '').toLowerCase();
+    const match = slots.find(
+      slot => sanitizeBaseUrl(slot.baseUrl).toLowerCase() === target
+    );
+    return match ? match.id : null;
+  } catch (ignored) {
+    return null;
+  }
 };
 
 /**
