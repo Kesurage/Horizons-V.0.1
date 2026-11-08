@@ -8,6 +8,10 @@ import {
   askSpecialist,
   webSearch,
   getProviderSlots,
+  startTeamResearch,
+  getTeamResearchNotes,
+  injectResearchNotesIntoMessages,
+  isTeamResearchAvailable,
 } from './MultiAiOrchestrator';
 import { DEFAULT_AI_SYSTEM_PROMPT } from './UniversalAiClient';
 
@@ -1138,6 +1142,12 @@ export const convertOpenAiResponseToGDevelopMessages = (
 /**
  * Core bridge: send the conversation through the Multi-AI team
  * (rate-limit queue + failover) and get back GDevelop-format messages.
+ *
+ * TEAM MODE: in agent/orchestrator mode, while the BUILDER (primary
+ * provider, e.g. GLM) implements the request with tools, the RESEARCHER
+ * (specialist, e.g. Gemini) runs on the SAME request IN PARALLEL. Its
+ * notes are injected into the builder's next step and appended to the
+ * final answer — two models, two different jobs, at the same time.
  */
 export const runUniversalAiTurn = async ({
   config,
@@ -1146,6 +1156,9 @@ export const runUniversalAiTurn = async ({
   newUserPrompt,
   mode,
   existingHistoryOutput,
+  teamSessionId,
+  projectDigest,
+  researchPrompt,
 }: {
   config: UniversalAiConfig,
   systemPrompt: string,
@@ -1153,6 +1166,11 @@ export const runUniversalAiTurn = async ({
   newUserPrompt?: ?string,
   mode: 'chat' | 'agent' | 'orchestrator',
   existingHistoryOutput?: ?Array<any>,
+  teamSessionId?: ?string,
+  projectDigest?: ?string,
+  /** Latest user message, used ONLY to trigger parallel team research
+   * (not appended to the messages — history already carries it). */
+  researchPrompt?: ?string,
 }): Promise<{ messages: Array<any> }> => {
   const chatMessages: Array<any> = [{ role: 'system', content: systemPrompt }];
 
@@ -1168,6 +1186,32 @@ export const runUniversalAiTurn = async ({
   }
 
   const useTools = mode !== 'chat';
+
+  // --- Parallel team research (agent modes only) -------------------------
+  // Kick the researcher off BEFORE the builder request: both models then
+  // work simultaneously on different jobs (builder edits the project,
+  // researcher produces asset/UX/pitfall notes).
+  const sessionId = teamSessionId || null;
+  const researchTrigger =
+    researchPrompt && researchPrompt.trim().length > 0
+      ? researchPrompt
+      : newUserPrompt || null;
+  if (
+    sessionId &&
+    researchTrigger &&
+    (mode === 'agent' || mode === 'orchestrator') &&
+    isTeamResearchAvailable()
+  ) {
+    startTeamResearch({
+      sessionId,
+      userPrompt: researchTrigger,
+      projectDigest: projectDigest || null,
+    });
+  }
+  // Notes that arrived while previous builder steps ran are injected here.
+  if (sessionId) {
+    injectResearchNotesIntoMessages(sessionId, chatMessages);
+  }
 
   // Prefer the team slot matching the explicitly configured endpoint
   // (falls back to the default team order when not found).
@@ -1204,8 +1248,24 @@ export const runUniversalAiTurn = async ({
     throw new Error('The AI provider returned an unexpected response.');
   }
 
+  // The builder's final answer (no more tool calls): wait briefly for the
+  // researcher's parallel notes and attach them, clearly labelled.
+  let finalText: string = responseMessage.content || '';
+  const madeToolCalls =
+    Array.isArray(responseMessage.tool_calls) &&
+    responseMessage.tool_calls.length > 0;
+  if (sessionId && !madeToolCalls) {
+    const research = await getTeamResearchNotes(sessionId, 12000);
+    if (research) {
+      finalText = `${finalText}\n\n---\n🔍 **Team researcher (${research.providerLabel}) — worked in parallel while the builder implemented:**\n${research.notes}`;
+    }
+  }
+
   return {
-    messages: convertOpenAiResponseToGDevelopMessages(responseMessage),
+    messages: convertOpenAiResponseToGDevelopMessages({
+      ...responseMessage,
+      content: finalText,
+    }),
   };
 };
 

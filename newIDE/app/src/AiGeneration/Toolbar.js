@@ -63,9 +63,14 @@ const AiStatusChip = ({
 
   const isBusy =
     lastEvent &&
-    ['request-start', 'queued', 'delegation', 'web-search'].includes(
-      lastEvent.kind
-    );
+    [
+      'request-start',
+      'queued',
+      'delegation',
+      'web-search',
+      'team-parallel',
+      'request-retry',
+    ].includes(lastEvent.kind);
   const dotColor = !readySlots.length
     ? '#e53935'
     : isBusy
@@ -78,7 +83,7 @@ const AiStatusChip = ({
     <Tooltip
       title={
         readySlots.length
-          ? t`AI team: ${readyLabels.join(' + ')} — rate limits queued, failover automatic. Click for settings.`
+          ? t`AI team: ${readyLabels.join(' + ')} — the builder implements while the researcher works in parallel; retries and failover are automatic. Click for settings.`
           : t`No AI provider configured. Click to add your free GLM (Z.ai) / Gemini keys.`
       }
     >

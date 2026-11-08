@@ -6,10 +6,9 @@ import React, { Component, type Element } from 'react';
 // $FlowFixMe[cannot-resolve-module] - react-dom/client is available in React 18
 import { createRoot } from 'react-dom/client';
 import Authentication from './Utils/GDevelopServices/Authentication';
-import {
-  sendProgramOpening,
-  installAnalyticsEvents,
-} from './Utils/Analytics/EventSender';
+// GDevelop cloud analytics removed — Horizons is fully offline (BYOK AI,
+// local storage only). The extension shop (community extensions, fetched
+// from GitHub) is the only remaining online feature.
 import {
   registerServiceWorker,
   ensurePersistentStorage,
@@ -68,7 +67,7 @@ class Bootstrapper extends Component<{}, State> {
   authentication = new Authentication();
 
   componentDidMount() {
-    installAnalyticsEvents();
+    // Analytics disabled: Horizons phones home to nobody.
     GD_STARTUP_TIMES.push(['bootstrapperComponentDidMount', performance.now()]);
 
     // Load GDevelop.js, ensuring a new version is fetched when the version changes.
@@ -101,7 +100,6 @@ class Bootstrapper extends Component<{}, State> {
           'libGD.js initialization done',
           performance.now(),
         ]);
-        sendProgramOpening();
 
         if (electron) {
           import(/* webpackChunkName: "local-app" */ './LocalApp')

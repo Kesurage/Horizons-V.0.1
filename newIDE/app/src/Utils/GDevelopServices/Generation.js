@@ -520,6 +520,8 @@ export const createAiRequest = async (
       systemPrompt,
       newUserPrompt: userRequest,
       mode: effectiveMode,
+      teamSessionId: aiRequestId,
+      projectDigest,
     });
 
     const newAiRequest: AiRequest = {
@@ -692,6 +694,9 @@ export const addMessageToAiRequest = async (
       historyGDevelopOutput: fullOutput,
       newUserPrompt: null,
       mode: effectiveMode,
+      teamSessionId: aiRequestId,
+      projectDigest,
+      researchPrompt: userMessage || null,
     });
 
     const updatedRequest: AiRequest = {
@@ -1204,13 +1209,12 @@ export const fetchAiSettings = async ({
 }: {|
   environment: Environment,
 |}): Promise<AiSettings> => {
-  // $FlowFixMe[underconstrained-implicit-instantiation]
-  const response = await axios.get(
-    `${GDevelopAiCdn.baseUrl[environment]}/ai-settings.json`
+  // GDevelop cloud AI settings removed: Horizons is BYOK (bring your own
+  // key) — provider presets live locally in AiGeneration/UniversalAiClient
+  // (AI_PRESETS) and the Multi-AI team configuration. Throwing lets the
+  // callers fall back to their built-in Universal AI presets, exactly like
+  // when the CDN used to be unreachable.
+  throw new Error(
+    'GDevelop cloud AI settings are removed in Horizons (offline BYOK build) — using the built-in Universal AI presets.'
   );
-  return ensureObjectHasProperty({
-    data: response.data,
-    propertyName: 'aiRequest',
-    endpointName: '/ai-settings.json of Generation API',
-  });
 };

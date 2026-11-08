@@ -167,53 +167,62 @@ jobs:
       - name: Rename APK
         run: |
           mkdir -p release
-          cp capacitor-app/android/app/build/outputs/apk/release/app-release.apk release/Horizons-v0.2.3.apk
+          cp capacitor-app/android/app/build/outputs/apk/release/app-release.apk release/Horizons-v0.2.4.apk
           ls -la release/
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: horizons-apk
-          path: release/Horizons-v0.2.3.apk
+          path: release/Horizons-v0.2.4.apk
           retention-days: 30
 
       - name: Publish to GitHub Releases
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.2.3
-          name: Horizons V.0.2.3 — AI connects reliably on the real free tiers
+          tag_name: v0.2.4
+          name: Horizons V.0.2.4 — parallel AI team (builder + researcher), overload-proof, offline
           body: |
-            ## Horizons V.0.2.3 APK
+            ## Horizons V.0.2.4 APK — the AI team now works in PARALLEL
 
-            Install: download `Horizons-v0.2.3.apk` on your Android device and open it (allow "install from unknown sources").
+            Install: download `Horizons-v0.2.4.apk` on your Android device and open it (allow "install from unknown sources").
 
-            ### Why the AI kept failing while your API key was fine
+            ### What was really going on with "rate limit" and "no response"
 
-            The app assumed the Z.ai free tier allows **40 requests/minute**. It actually allows **5 requests/minute, 500 requests/day and ONE request at a time**. The editor itself burned through that quota in seconds, so every request — including "Test Connection" — returned **HTTP 429**, while testing the same key in another tool worked perfectly. This release fixes exactly that:
+            Your key was fine all along — two separate engine bugs made it look broken:
 
-            - **Fix: correct free-tier limits** — GLM 5 req/min (500/day), Gemini ~10 req/min. Existing installs migrate automatically; requests queue and space themselves out instead of hammering the API
-            - **Fix: self-inflicted 429 on "Test Connection"** — the test now queues through the same rate window as the AI agent (free tiers allow a single concurrent request per key: testing while the agent was thinking triggered 429)
-            - **Fix: Z.ai error codes handled properly** — 1302 rate limit (30s cooldown, instant failover to the next team member), 1305 temporary overload (short retry on the same provider), 1113 paid-model/no-balance (clear message instead of a confusing "rate limit")
-            - **Fix: lone-provider recovery** — if your only configured provider hits a rate limit, the request waits for the window to recover (~10–30s) and retries once, instead of failing with "All providers failed"
-            - **Fix: `{teamReadyCount}` placeholder** — the AI settings screens showed the raw variable instead of your ready-provider count
-            - **Clearer 429 messages** — they now explain that requests from other apps/devices using the same key also count, and suggest adding a second provider
+            1. **"Rate limit is over" on GLM**: Z.ai's *free* flash servers are globally shared and regularly answer `429 — "The service may be temporarily overloaded"` (Z.ai code **1305**). That is Z.ai being busy, NOT your quota and NOT your key — which is exactly why the same key tested "fine and fast" elsewhere. The app used to show it as a scary rate-limit error after one try. **Now it auto-retries patiently (up to 4 attempts) with a visible "Z.ai's free servers are momentarily busy — retrying" status.**
+            2. **Gemini never responding**: some requests could hang forever with no timeout ever firing. All AI networking now goes through a new fetch core with a **guaranteed watchdog timeout** — every request always answers.
+            3. **Over-throttling**: the previous build assumed "5 req/min, ONE request at a time" and paced every GLM request 12+ seconds apart. GLM 4.7 Flash actually allows bursts. Pacing is now **adaptive**: fast when the provider is healthy, backs off automatically when it returns real rate limits (code 1302), recovers after successes.
+
+            ### The Multi-AI team is now a real TEAM, not a fallback chain
+
+            You asked for both AIs working together on different jobs — done (architecture inspired by [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness), MIT):
+
+            - **GLM = Builder**: implements your request with tools (objects, events, behaviors) — as before.
+            - **Gemini = Researcher**: starts **at the same time** on the same request — asset/UX suggestions, gameplay polish, pitfalls to avoid — on its own provider and rate window (never stealing GLM's).
+            - The builder receives the researcher's notes mid-build and uses them; the final answer carries them, clearly labelled ("Team researcher — worked in parallel").
+            - The chat now shows **live team status** while working (who is building, who is researching, retries, queueing) instead of a silent "Thinking...".
+            - Failover remains as a safety net when a provider is truly down.
+
+            ### GDevelop cloud services removed (offline + privacy)
+
+            All GDevelop cloud services are gone except the **extension shop**: no more Firebase accounts, no PostHog analytics, no AI-settings CDN fetch, no cloud AI presets — nothing phones home. Everything (projects, AI with YOUR keys, history, exports) stays on-device. The extension shop and example templates (static files from GitHub) remain.
+
+            ### Also in this release
+
+            - Precise error messages per Z.ai code: 1305 (servers busy — key fine), 1302 (rate limit — other apps with the same key count too), 1113 (model not free / balance), 1311 (plan lacks model), 1310/1308 (usage window — resets automatically)
+            - "Test Connection" retries transient provider conditions instead of failing on the first busy moment
+            - Old installs migrate to the new adaptive settings automatically
 
             ### Setup (BYOK — bring your own keys)
 
             1. Get free keys: [Z.ai](https://z.ai) (GLM 4.7 Flash — free) and [Google AI Studio](https://aistudio.google.com) (Gemini Flash — free tier)
-            2. In the app: Preferences → AI Provider → paste your GLM key, **and add the Gemini key too** (Configure Multi-AI Team) — when GLM hits its 5 req/min ceiling, Gemini answers instead, automatically
-            3. Press **Test** to verify. Note: on the free tiers, long agent tasks queue requests ~12s apart on GLM — the app paces them for you
-
-            ### Free-tier cheat sheet
-
-            | Provider | RPM | Daily cap | Concurrency |
-            | --- | --- | --- | --- |
-            | GLM 4.7 Flash (Z.ai) | 5 | 500/day | 1 |
-            | Gemini Flash (Google) | ~10 | varies | 1+ |
-            | Both as a team | ~15 combined | — | automatic failover |
+            2. In the app: Preferences → AI Provider → paste your GLM key **and** your Gemini key (Multi-AI Team) — that's what unlocks the parallel team
+            3. Press **Test**. If Z.ai's free servers are momentarily busy, you'll see the automatic retry instead of an error.
           draft: false
           prerelease: false
-          files: release/Horizons-v0.2.3.apk
+          files: release/Horizons-v0.2.4.apk
           fail_on_unmatched_files: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

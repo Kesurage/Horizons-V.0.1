@@ -1,5 +1,5 @@
 // @flow
-import axios from 'axios';
+import { aiFetch } from './AiHttp';
 import type {
   AiRequest,
   AiRequestAssistantMessage,
@@ -42,7 +42,7 @@ export const AI_PRESETS: {
     baseUrl: 'https://api.z.ai/api/paas/v4',
     model: 'glm-4.7-flash',
     description:
-      'Z.ai GLM — agent-oriented workhorse. Free tier: 5 req/min, 500 req/day, ONE request at a time. Get a key at z.ai.',
+      'Z.ai GLM — the team\u2019s builder. Free tier allows bursts (globally shared: it answers instantly most of the time, occasionally returns "service overloaded" which the app auto-retries). Get a free key at z.ai.',
     requiresKey: true,
   },
   gemini: {
@@ -50,7 +50,7 @@ export const AI_PRESETS: {
     baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
     model: 'gemini-flash-latest',
     description:
-      'Google AI Studio — free tier ~10 req/min, huge context, vision + web search specialist.',
+      'Google AI Studio — the team\u2019s researcher: works IN PARALLEL on assets, gameplay polish and web search. Free tier ~10-15 req/min.',
     requiresKey: true,
   },
   ollama: {
@@ -196,17 +196,38 @@ export const describeAiError = (error: any, baseUrl: string): string => {
                 : response.data.error.code
             )
           : '';
-      if (
-        providerCode === '1113' ||
-        /balance|insufficient|资源|余额/i.test(providerMessage || '')
-      ) {
+      if (providerCode === '1113' || /balance|insufficient|资源|余额/i.test(providerMessage || '')) {
         return `This model is not free on your account / the balance is insufficient (code 1113).${
           providerMessage ? ` Provider says: "${providerMessage}"` : ''
         } Use a free model (e.g. glm-4.7-flash) or top up your ${baseUrl} account.`;
       }
-      return `Rate limit or quota reached on the provider (HTTP 429).${
+      if (providerCode === '1305') {
+        // The exact message the user kept seeing while their key was fine:
+        // Z.ai's globally-shared FREE servers were simply busy.
+        return `Z.ai's free servers are momentarily OVERLOADED (code 1305).${
+          providerMessage ? ` Provider says: "${providerMessage}"` : ''
+        } This is on Z.ai's side — your key and quota are fine (that's why the same key works elsewhere). The app retries automatically; retry in a minute, or add a second provider (Gemini) so the team keeps working meanwhile.`;
+      }
+      if (providerCode === '1311') {
+        return `Your plan does not include this model (code 1311).${
+          providerMessage ? ` Provider says: "${providerMessage}"` : ''
+        } Switch to a free model (e.g. glm-4.7-flash).`;
+      }
+      if (
+        ['1308', '1310', '1316', '1317', '1318', '1319', '1320', '1321'].includes(
+          providerCode
+        )
+      ) {
+        return `The free usage window is exhausted for now (code ${providerCode}).${
+          providerMessage ? ` Provider says: "${providerMessage}"` : ''
+        } Z.ai resets it automatically — use another team member (Gemini) meanwhile.`;
+      }
+      // 1302 and generic 429s.
+      return `Rate limit reached on the provider (HTTP 429${
+        providerCode ? `, code ${providerCode}` : ''
+      }).${
         providerMessage ? ` Provider says: "${providerMessage}"` : ''
-      } Free tiers are strict: GLM allows ~5 req/min and ONE request at a time — requests from other apps or devices using the same key also count. Wait a moment, or add a second provider (e.g. Gemini) to the Multi-AI team so one answers while the other cools down.`;
+      } Note: requests from OTHER apps/devices using the same key also count toward the limit. The app queues and retries automatically — or add a second provider (Gemini) so the team keeps answering while this one cools down.`;
     }
     if (status >= 500) {
       return `The provider had a server error (HTTP ${status}).${
@@ -273,103 +294,139 @@ export const testAiConnection = async (config: {
   const startTime = Date.now();
   const baseUrl = sanitizeBaseUrl(config.baseUrl);
 
-  try {
-    const headers: { [string]: string } = {
-      'Content-Type': 'application/json',
-    };
-    if (config.apiKey && config.apiKey.trim().length > 0) {
-      headers['Authorization'] = `Bearer ${config.apiKey.trim()}`;
-    }
+  const headers: { [string]: string } = {
+    'Content-Type': 'application/json',
+  };
+  if (config.apiKey && config.apiKey.trim().length > 0) {
+    headers['Authorization'] = `Bearer ${config.apiKey.trim()}`;
+  }
 
-    // 256 tokens: enough for reasoning models (GLM 4.x "thinking" mode) to
-    // still produce visible output — with the old 10-token budget they
-    // replied "" (all tokens spent reasoning), which looked like a failure.
-    const payload = {
-      model: config.model.trim() || 'gpt-4o',
-      messages: [
-        {
-          role: 'user',
-          content: 'Reply with "OK" only.',
-        },
-      ],
-      max_tokens: 256,
-      temperature: 0.1,
-    };
+  // 256 tokens: enough for reasoning models (GLM 4.x "thinking" mode) to
+  // still produce visible output — with the old 10-token budget they
+  // replied "" (all tokens spent reasoning), which looked like a failure.
+  const payload = {
+    model: config.model.trim() || 'gpt-4o',
+    messages: [
+      {
+        role: 'user',
+        content: 'Reply with "OK" only.',
+      },
+    ],
+    max_tokens: 256,
+    temperature: 0.1,
+  };
 
-    // Serialize through the matching team slot's queue: free tiers such as
-    // Z.ai allow ONE concurrent request — a test fired while the agent is
-    // thinking would return HTTP 429 (code 1302) even with a perfect key.
-    const response = await runGatedOnMatchingSlot(config.baseUrl, () =>
-      axios.post(`${baseUrl}/chat/completions`, payload, {
-        headers,
-        timeout: 45000,
-      })
-    );
+  // The test retries transient conditions (Z.ai code 1305 "service
+  // temporarily overloaded" — the FREE tier is globally shared — plus 5xx
+  // and timeouts) so a momentarily-busy provider is not reported as a
+  // broken key. Rate limits (1302) and auth errors are NOT retried: the
+  // error message tells the user what to do instead.
+  const maxAttempts = 3;
+  let lastError: any = null;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    // Serialize through the matching team slot's queue so the test never
+    // competes with an in-flight agent request.
+    try {
+      const response = await runGatedOnMatchingSlot(config.baseUrl, () =>
+        aiFetch(`${baseUrl}/chat/completions`, {
+          method: 'POST',
+          headers,
+          body: payload,
+          timeoutMs: 45000,
+        })
+      );
 
-    const latencyMs = Date.now() - startTime;
-    if (
-      response.data &&
-      response.data.choices &&
-      response.data.choices.length > 0
-    ) {
-      const message = response.data.choices[0].message;
-      const reply = ((message && message.content) || '').trim();
-      // Reasoning models can answer with an empty content but a
-      // reasoning_content — still a successful connection.
-      const reasoning = (message && message.reasoning_content) || '';
-      if (reply) {
+      const latencyMs = Date.now() - startTime;
+      if (
+        response.data &&
+        response.data.choices &&
+        response.data.choices.length > 0
+      ) {
+        const message = response.data.choices[0].message;
+        const reply = ((message && message.content) || '').trim();
+        // Reasoning models can answer with an empty content but a
+        // reasoning_content — still a successful connection.
+        const reasoning = (message && message.reasoning_content) || '';
+        if (reply) {
+          return {
+            success: true,
+            message: `Connected successfully! Model replied in ${latencyMs}ms: "${reply.slice(
+              0,
+              120
+            )}"`,
+            latencyMs,
+          };
+        }
+        if (reasoning) {
+          return {
+            success: true,
+            message: `Connected in ${latencyMs}ms. The model is a reasoning model (it "thinks" before answering) — replies may take a little longer.`,
+            latencyMs,
+          };
+        }
         return {
           success: true,
-          message: `Connected successfully! Model replied in ${latencyMs}ms: "${reply.slice(
-            0,
-            120
-          )}"`,
+          message: `Connection successful (${latencyMs}ms).`,
           latencyMs,
         };
       }
-      if (reasoning) {
-        return {
-          success: true,
-          message: `Connected in ${latencyMs}ms. The model is a reasoning model (it "thinks" before answering) — replies may take a little longer.`,
-          latencyMs,
-        };
-      }
+
       return {
         success: true,
         message: `Connection successful (${latencyMs}ms).`,
         latencyMs,
       };
-    }
-
-    return {
-      success: true,
-      message: `Connection successful (${latencyMs}ms).`,
-      latencyMs,
-    };
-  } catch (error) {
-    let message = describeAiError(error, baseUrl);
-    // When the model name is wrong (404), try to help the user by listing
-    // what the endpoint actually offers.
-    if (error && error.response && error.response.status === 404) {
-      try {
-        const models = await fetchAvailableModels({
-          baseUrl: config.baseUrl,
-          apiKey: config.apiKey,
-        });
-        if (models.length > 0) {
-          message += `\nModels available on this endpoint: ${models
-            .slice(0, 8)
-            .join(', ')}${models.length > 8 ? `, … (+${models.length - 8} more)` : ''}`;
-        }
-      } catch (ignored) {
-        // Model discovery failed too — the original error is enough.
+    } catch (error) {
+      lastError = error;
+      const status = error && error.response && error.response.status;
+      const providerCode =
+        error && error.response && error.response.data &&
+        error.response.data.error && error.response.data.error.code !== undefined
+          ? String(error.response.data.error.code)
+          : '';
+      const transient =
+        providerCode === '1305' || (status !== undefined && status >= 500) ||
+        error.code === 'ECONNABORTED' ||
+        (!error.response && !!error.message);
+      if (transient && attempt < maxAttempts) {
+        console.info(
+          `[AI] Test connection: transient provider condition (code ${
+            providerCode || status || 'network'
+          }) — retrying in 6s (attempt ${attempt + 1}/${maxAttempts})`
+        );
+        await new Promise(resolve => setTimeout(resolve, 6000));
+        continue;
       }
+      break;
     }
-    return {
-      success: false,
-      message,
-    };
   }
+
+  let message = describeAiError(lastError, baseUrl);
+  // When the model name is wrong (404), try to help the user by listing
+  // what the endpoint actually offers.
+  if (
+    lastError &&
+    lastError.response &&
+    lastError.response.status === 404
+  ) {
+    try {
+      const models = await fetchAvailableModels({
+        baseUrl: config.baseUrl,
+        apiKey: config.apiKey,
+      });
+      if (models.length > 0) {
+        message += `\nModels available on this endpoint: ${models
+          .slice(0, 8)
+          .join(', ')}${models.length > 8 ? `, … (+${models.length - 8} more)` : ''}`;
+      }
+    } catch (ignored) {
+      // Model discovery failed too — the original error is enough.
+    }
+  }
+  return {
+    success: false,
+    message,
+  };
 };
 
 /**
@@ -391,9 +448,9 @@ export const fetchAvailableModels = async (config: {
   if (isGeminiNativeBaseUrl(baseUrl)) {
     // Gemini native API: GET {base}/models?key=... → { models: [{ name: "models/..." }] }
     const separator = baseUrl.includes('?') ? '&' : '?';
-    const response = await axios.get(
+    const response = await aiFetch(
       `${baseUrl}/models${separator}key=${encodeURIComponent(apiKey)}`,
-      { timeout: 12000 }
+      { timeoutMs: 12000 }
     );
     const models = parseModelsResponseData(response.data);
     if (models.length === 0) {
@@ -406,9 +463,9 @@ export const fetchAvailableModels = async (config: {
 
   try {
     const response = await runGatedOnMatchingSlot(config.baseUrl, () =>
-      axios.get(`${baseUrl}/models`, {
+      aiFetch(`${baseUrl}/models`, {
         headers,
-        timeout: 12000,
+        timeoutMs: 12000,
       })
     );
     const models = parseModelsResponseData(response.data);
@@ -425,9 +482,9 @@ export const fetchAvailableModels = async (config: {
     // Some providers reject the Bearer header but accept ?key= — retry once.
     if (error && error.response && error.response.status === 401 && apiKey) {
       const separator = baseUrl.includes('?') ? '&' : '?';
-      const response = await axios.get(
+      const response = await aiFetch(
         `${baseUrl}/models${separator}key=${encodeURIComponent(apiKey)}`,
-        { timeout: 12000 }
+        { timeoutMs: 12000 }
       );
       const models = parseModelsResponseData(response.data);
       if (models.length > 0) return models;

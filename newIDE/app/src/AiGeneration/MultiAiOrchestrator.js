@@ -23,7 +23,7 @@
  * Everything is stored locally (localStorage) — no GDevelop cloud involved.
  */
 
-import axios from 'axios';
+import { aiFetch } from './AiHttp';
 import { sanitizeBaseUrl, describeAiError } from './UniversalAiClient';
 
 // ---------------------------------------------------------------------------
@@ -68,6 +68,7 @@ export type AiStatusEvent = {
     | 'provider-success'
     | 'delegation'
     | 'web-search'
+    | 'team-parallel'
     | 'team-exhausted',
   slotId: ?string,
   label: string,
@@ -92,7 +93,11 @@ export const DEFAULT_PROVIDER_SLOTS: Array<AiProviderSlot> = [
     baseUrl: ZAI_BASE_URL,
     apiKey: '',
     model: 'glm-4.7-flash',
-    rpmLimit: 5, // Z.ai free tier: 5 req/min, 500 req/day, ONE concurrent request
+    // Z.ai free tier: ~5-12 req/min depending on load, bursts allowed.
+    // The scheduler is ADAPTIVE: it starts at this value, halves it on
+    // provider-side 1302 rate limits and recovers after successes — so the
+    // number here is the optimistic ceiling, not a pessimistic throttle.
+    rpmLimit: 12,
     enabled: true,
     role: 'primary',
     capabilities: ['text'],
@@ -105,7 +110,7 @@ export const DEFAULT_PROVIDER_SLOTS: Array<AiProviderSlot> = [
     baseUrl: GEMINI_OPENAI_BASE_URL,
     apiKey: '',
     model: 'gemini-flash-latest',
-    rpmLimit: 10, // Google AI Studio free tier (~10 req/min for flash models)
+    rpmLimit: 15, // Google AI Studio free tier (~10-15 req/min for flash models)
     enabled: true,
     role: 'specialist',
     capabilities: [
@@ -193,12 +198,19 @@ export const DEFAULT_PROVIDER_SLOTS: Array<AiProviderSlot> = [
 
 const MULTI_AI_STORAGE_KEY = 'gd-multi-ai-slots-v1';
 
-// rpmLimit defaults shipped by earlier versions (far above the real free
-// tiers), replaced with corrected values when found in stored slots so
-// existing installs pick up the fix. Genuinely customised values survive.
+// rpmLimit defaults shipped by earlier versions (either far above the real
+// free tiers or over-pessimistic single-concurrent values), replaced with
+// corrected values when found in stored slots so existing installs pick up
+// the fix. Genuinely customised values survive.
 const LEGACY_DEFAULT_RPM_LIMITS: { [string]: number } = {
   'glm-primary': 40,
   'gemini-specialist': 15,
+};
+const LEGACY_DEFAULT_RPM_LIMITS_V2: { [string]: number } = {
+  // v0.2.3 values (over-pessimistic "5 RPM / one concurrent" assumptions —
+  // GLM 4.7 Flash actually allows bursts; the scheduler is adaptive now).
+  'glm-primary': 5,
+  'gemini-specialist': 10,
 };
 const LEGACY_PREFERENCES_KEY = 'gd-preferences';
 
@@ -311,11 +323,15 @@ export const getProviderSlots = (): Array<AiProviderSlot> => {
         const merged = DEFAULT_PROVIDER_SLOTS.map(defaultSlot => {
           const stored = storedById[defaultSlot.id] || {};
           const slot = { ...defaultSlot, ...stored };
-          const legacyDefaultRpm = LEGACY_DEFAULT_RPM_LIMITS[defaultSlot.id];
-          if (
-            legacyDefaultRpm !== undefined &&
-            slot.rpmLimit === legacyDefaultRpm
-          ) {
+          const legacyDefaultRpm =
+            LEGACY_DEFAULT_RPM_LIMITS[defaultSlot.id] !== undefined &&
+            slot.rpmLimit === LEGACY_DEFAULT_RPM_LIMITS[defaultSlot.id]
+              ? LEGACY_DEFAULT_RPM_LIMITS[defaultSlot.id]
+              : LEGACY_DEFAULT_RPM_LIMITS_V2[defaultSlot.id] !== undefined &&
+                slot.rpmLimit === LEGACY_DEFAULT_RPM_LIMITS_V2[defaultSlot.id]
+              ? LEGACY_DEFAULT_RPM_LIMITS_V2[defaultSlot.id]
+              : undefined;
+          if (legacyDefaultRpm !== undefined) {
             slot.rpmLimit = defaultSlot.rpmLimit;
           }
           return slot;
@@ -440,6 +456,10 @@ type SlotRuntime = {
   queue: Promise<*>,
   cooldownUntil: number,
   consecutiveFailures: number,
+  /** Adaptive RPM: starts at the slot's rpmLimit, halves on provider-side
+   * 1302 rate limits, recovers after success streaks. See getEffectiveRpm. */
+  adaptiveRpm: number,
+  successStreak: number,
 };
 
 const runtimes: { [string]: SlotRuntime } = {};
@@ -451,10 +471,41 @@ const getRuntime = (slotId: string): SlotRuntime => {
       queue: Promise.resolve(),
       cooldownUntil: 0,
       consecutiveFailures: 0,
+      adaptiveRpm: 0, // 0 = not yet initialised (set on first use)
+      successStreak: 0,
     };
   }
-  return runtimes[slotId];
+  const runtime = runtimes[slotId];
+  if (!runtime.adaptiveRpm) {
+    const slot = getProviderSlots().find(s => s.id === slotId);
+    runtime.adaptiveRpm = slot && slot.rpmLimit > 0 ? slot.rpmLimit : 60;
+  }
+  return runtime;
 };
+
+/** Provider said 1302 (too many requests): slow down this slot, hard. */
+const noteRateLimited = (slot: AiProviderSlot) => {
+  const runtime = getRuntime(slot.id);
+  runtime.adaptiveRpm = Math.max(3, Math.floor(runtime.adaptiveRpm / 2));
+  runtime.successStreak = 0;
+};
+
+/** A request succeeded: slowly trust the provider again. */
+const noteSuccessPacing = (slot: AiProviderSlot) => {
+  const runtime = getRuntime(slot.id);
+  runtime.successStreak += 1;
+  if (runtime.successStreak >= 4) {
+    const ceiling = slot.rpmLimit > 0 ? slot.rpmLimit : 60;
+    runtime.adaptiveRpm = Math.min(
+      ceiling,
+      Math.ceil(runtime.adaptiveRpm * 1.25)
+    );
+    runtime.successStreak = 0;
+  }
+};
+
+const getEffectiveRpm = (slot: AiProviderSlot, runtime: SlotRuntime) =>
+  slot.rpmLimit > 0 ? Math.min(slot.rpmLimit, runtime.adaptiveRpm) : 0;
 
 const msUntilSlotFree = (
   slot: AiProviderSlot,
@@ -464,12 +515,13 @@ const msUntilSlotFree = (
   if (now < runtime.cooldownUntil) {
     return runtime.cooldownUntil - now;
   }
-  if (!slot.rpmLimit || slot.rpmLimit <= 0) return 0;
+  const effectiveRpm = getEffectiveRpm(slot, runtime);
+  if (!effectiveRpm || effectiveRpm <= 0) return 0;
   const windowStart = now - 60 * 1000;
   runtime.requestTimestamps = runtime.requestTimestamps.filter(
     timestamp => timestamp > windowStart
   );
-  if (runtime.requestTimestamps.length < slot.rpmLimit) return 0;
+  if (runtime.requestTimestamps.length < effectiveRpm) return 0;
   const oldestInWindow = runtime.requestTimestamps[0];
   return Math.max(oldestInWindow + 60 * 1000 - now, 250);
 };
@@ -529,10 +581,11 @@ const isServerError = (error: any): boolean => {
 const extractRetryAfterMs = (error: any): ?number => {
   const headers = error && error.response && error.response.headers;
   if (!headers) return null;
-  const retryAfter = headers['retry-after'];
+  const retryAfter =
+    headers['retry-after'] || headers['Retry-After'] || headers['retry-after-ms'];
   if (retryAfter) {
     const seconds = parseFloat(retryAfter);
-    if (!isNaN(seconds)) return seconds * 1000;
+    if (!isNaN(seconds)) return seconds > 1000 ? seconds : seconds * 1000;
   }
   return null;
 };
@@ -540,8 +593,13 @@ const extractRetryAfterMs = (error: any): ?number => {
 /**
  * Extract the provider's own error code from the response body
  * (Z.ai/OpenAI shape: {"error": {"code": "1302", "message": ...}}).
- * Z.ai codes: 1302 = too many requests (RPM/concurrency), 1305 = temporary
- * provider overload, 1113 = model not free / insufficient balance.
+ * Z.ai codes (docs.z.ai/api-reference/api-code):
+ *  1302 = too many requests (RPM/concurrency) — back off, halve the pace
+ *  1305 = the service is temporarily OVERLOADED — Z.ai's free servers are
+ *         busy; NOT the user's quota or key. Retry the same slot shortly.
+ *  1308/1310/1316-1321 = usage window exhausted (resets at a given time)
+ *  1113 = insufficient balance / model not free
+ *  1311 = the plan does not include this model
  */
 const extractProviderErrorCode = (error: any): ?string => {
   const data = error && error.response && error.response.data;
@@ -550,6 +608,10 @@ const extractProviderErrorCode = (error: any): ?string => {
   if (code === undefined || code === null) return null;
   return String(code);
 };
+
+/** Usage-window limits (1308, 1310, 1316-1321): long cooldown needed. */
+const isUsageWindowLimitCode = (code: ?string): boolean =>
+  !!code && ['1308', '1310', '1316', '1317', '1318', '1319', '1320', '1321'].includes(code);
 
 const markSlotResult = (slot: AiProviderSlot, success: boolean) => {
   const runtime = getRuntime(slot.id);
@@ -651,59 +713,98 @@ const callSlotChatCompletions = async ({
       payload.thinking = { type: 'disabled' };
     }
 
-    // Transient errors (5xx, timeouts, network blips) are retried once on the
+    // Transient errors (5xx, timeouts, network blips) are retried on the
     // same provider before failing over to the next one.
-    // Rate limits (429) are NOT retried here: the provider goes into cooldown
-    // and the next provider of the team takes the request immediately —
-    // waiting minutes on a rate-limited free tier is the worst UX.
-    const maxAttempts = 2;
+    //
+    // Z.ai code 1305 ("The service may be temporarily overloaded") deserves
+    // special care: the FREE flash tier is globally shared and regularly
+    // returns 1305 for bursts of a few seconds to a few minutes — with a
+    // perfectly valid key and untouched quota. Tests from other tools work
+    // "fine and fast" simply because they happened to miss those bursts.
+    // So 1305 is retried patiently (4 attempts, 4s/8s/16s) on the SAME
+    // provider instead of surfacing "rate limit" errors to the user.
+    const maxAttempts = 4;
     let lastError: any = null;
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       runtime.requestTimestamps.push(Date.now());
       try {
-        const response = await axios.post(
+        const response = await aiFetch(
           `${sanitizeBaseUrl(slot.baseUrl)}/chat/completions`,
-          payload,
-          { headers, timeout: 180000 }
+          {
+            method: 'POST',
+            headers,
+            body: payload,
+            timeoutMs: 180000,
+          }
         );
+        noteSuccessPacing(slot);
         return response.data;
       } catch (error) {
         lastError = error;
         const providerErrorCode = extractProviderErrorCode(error);
-        if (providerErrorCode === '1113') {
-          // Z.ai: the model is not free / the account balance is empty.
+
+        // 1305 = temporary overload on the provider side: retrying the same
+        // provider beats failing over (the next one may not be configured).
+        if (
+          (providerErrorCode === '1305' || isServerError(error)) &&
+          attempt < maxAttempts
+        ) {
+          const backoffMs = providerErrorCode === '1305'
+            ? 4000 * attempt
+            : 2000 * attempt;
+          emitAiStatus({
+            kind: 'request-retry',
+            slotId: slot.id,
+            label: slot.label,
+            message:
+              providerErrorCode === '1305'
+                ? `${slot.label}: Z.ai's free servers are momentarily busy (code 1305 — not your key, not your quota). Retrying in ${Math.round(
+                    backoffMs / 1000
+                  )}s (attempt ${attempt + 1}/${maxAttempts})...`
+                : `${slot.label} had a transient error (attempt ${attempt}/${maxAttempts}) — retrying in ${Math.round(
+                    backoffMs / 1000
+                  )}s.`,
+            timestamp: Date.now(),
+          });
+          await sleep(backoffMs);
+          continue;
+        }
+
+        if (providerErrorCode === '1113' || providerErrorCode === '1311') {
+          // Z.ai: the model is not free / not in the plan / balance empty.
           // Hammering will not help — cool the slot down for a long time and
           // let the next team member answer.
           cooldownSlot(
             slot,
             10 * 60 * 1000,
-            `${slot.label}: this model is not free on your account (code 1113) — use a free model (e.g. glm-4.7-flash) or top up the balance`
+            `${slot.label}: ${
+              providerErrorCode === '1113'
+                ? 'this model is not free on your account / balance is empty (code 1113) — use a free model (e.g. glm-4.7-flash) or top up the balance'
+                : 'your plan does not include this model (code 1311) — switch to a free one (e.g. glm-4.7-flash)'
+            }`
+          );
+          throw error;
+        }
+        if (isUsageWindowLimitCode(providerErrorCode)) {
+          // Usage window exhausted (per 5h/7d/month). The limit resets at a
+          // time given by Z.ai — cool down for a long while.
+          cooldownSlot(
+            slot,
+            10 * 60 * 1000,
+            `${slot.label}: usage window exhausted (code ${providerErrorCode}) — the provider resets it automatically; the team will use another member meanwhile`
           );
           throw error;
         }
         if (isRateLimitError(error)) {
-          // 1305 = temporary overload on the provider side: a short retry on
-          // the same provider beats failing over (the next one may be unset).
-          if (providerErrorCode === '1305' && attempt < maxAttempts) {
-            emitAiStatus({
-              kind: 'request-retry',
-              slotId: slot.id,
-              label: slot.label,
-              message: `${slot.label} is temporarily overloaded (code 1305) — retrying in 6s.`,
-              timestamp: Date.now(),
-            });
-            await sleep(6000);
-            continue;
-          }
-          // 1302 = too many requests for this account+model. The free GLM
-          // tier allows ONE request at a time and ~5 req/min — requests made
-          // from other tools/devices with the same key also count.
+          // 1302 = too many requests for this account+model (requests from
+          // other tools/devices with the same key also count).
+          noteRateLimited(slot);
           const retryAfterMs =
             extractRetryAfterMs(error) ||
-            (providerErrorCode === '1302' ? 30000 : 20000);
+            (providerErrorCode === '1302' ? 25000 : 15000);
           cooldownSlot(
             slot,
-            Math.min(Math.max(retryAfterMs, 10000), 120000),
+            Math.min(Math.max(retryAfterMs, 8000), 90000),
             `${slot.label} hit its rate limit (HTTP ${
               error.response ? error.response.status : 429
             }${providerErrorCode ? `, code ${providerErrorCode}` : ''})`
@@ -711,14 +812,10 @@ const callSlotChatCompletions = async ({
           // Fail over immediately — another team member answers now.
           throw error;
         }
-        if (isServerError(error)) {
-          cooldownSlot(slot, 15000, `${slot.label} had a server error`);
-        }
         const retryable =
-          isServerError(error) ||
-          (error &&
-            (error.code === 'ECONNABORTED' ||
-              (!error.response && !!error.message)));
+          error &&
+          (error.code === 'ECONNABORTED' ||
+            (!error.response && !!error.message));
         if (!retryable || attempt >= maxAttempts) {
           throw error;
         }
@@ -973,6 +1070,204 @@ export const chatCompletionWithFailover = async ({
 };
 
 // ---------------------------------------------------------------------------
+// Parallel AI TEAM ("harness" mode, inspired by DeepSeek Harness)
+// ---------------------------------------------------------------------------
+// Horizons runs its providers as a real TEAM, not just as a fallback chain:
+// while the BUILDER (primary, e.g. GLM) implements the user's request with
+// tools, the RESEARCHER (specialist, e.g. Gemini) works on the SAME request
+// IN PARALLEL — asset/UX ideas, naming, gameplay polish and pitfalls — on a
+// different provider with its own rate window. The builder receives the
+// notes on its next step and the final answer carries them, clearly
+// labelled. (Architecture credit: DeepSeek Harness' "everything is a
+// swappable module" pattern — model adapters, tool registry, agent loop:
+// https://github.com/deepseek-ai/deepseek-harness, MIT.)
+
+type ResearchSession = {|
+  prompt: string,
+  promise: Promise<?string>,
+  notes: ?string,
+  injected: boolean,
+  specialistLabel: string,
+|};
+
+const researchSessions: { [string]: ResearchSession } = {};
+
+const RESEARCHER_SYSTEM_PROMPT = `You are the researcher/designer of a two-AI team building a GDevelop game.
+The builder AI (another model) is implementing the user's request WITH tools in parallel —
+you cannot modify the project. Your job is to make the result better:
+1. Asset & UX suggestions (objects to add, visual style, menu/feedback ideas).
+2. Gameplay polish (difficulty curve, juice: sounds, particles, screen effects).
+3. Pitfalls the builder should avoid (common GDevelop mistakes, event logic traps).
+Be CONCRETE and brief: max ~150 words, plain bullet points, no preamble.`;
+
+/** Can the team run parallel research right now? (specialist configured) */
+export const isTeamResearchAvailable = (): boolean => {
+  const specialist = getProviderSlots().find(
+    slot => slot.role === 'specialist' && isSlotUsable(slot)
+  );
+  return !!specialist;
+};
+
+/**
+ * Kick off (or replace) the parallel research for a conversation step.
+ * NEVER awaited by the caller while the builder works — results are picked
+ * up later via getTeamResearchNotes / injectResearchNotesIntoMessages.
+ * Only runs on a *specialist* slot: parallel research must never steal the
+ * primary provider's rate window (that would self-inflict 1302 errors).
+ */
+export const startTeamResearch = ({
+  sessionId,
+  userPrompt,
+  projectDigest,
+}: {|
+  sessionId: string,
+  userPrompt: string,
+  projectDigest?: ?string,
+|}): void => {
+  if (!userPrompt || !userPrompt.trim()) return;
+  const existing = researchSessions[sessionId];
+  if (existing && existing.prompt === userPrompt) return; // Already running.
+
+  const specialist = getProviderSlots().find(
+    slot => slot.role === 'specialist' && isSlotUsable(slot)
+  );
+  if (!specialist) {
+    // No specialist → no parallel job for the second team member. The
+    // builder keeps working alone; nothing is surfaced to the user.
+    return;
+  }
+
+  emitAiStatus({
+    kind: 'team-parallel',
+    slotId: specialist.id,
+    label: specialist.label,
+    message: `Team mode: ${specialist.label} starts researching in parallel while the builder implements.`,
+    timestamp: Date.now(),
+  });
+
+  const userContent = [
+    `# USER REQUEST\n${userPrompt.slice(0, 6000)}`,
+    projectDigest
+      ? `\n# PROJECT CONTEXT (truncated)\n${projectDigest.slice(0, 12000)}`
+      : '',
+  ]
+    .filter(Boolean)
+    .join('\n');
+
+  const promise = (async (): Promise<?string> => {
+    try {
+      const data = await callSlotChatCompletions({
+        slot: specialist,
+        messages: [
+          { role: 'system', content: RESEARCHER_SYSTEM_PROMPT },
+          { role: 'user', content: userContent },
+        ],
+        tools: null,
+        temperature: 0.6,
+      });
+      const choice = data && data.choices && data.choices[0];
+      const text = (choice && choice.message && choice.message.content) || '';
+      return text.trim() || null;
+    } catch (ignored) {
+      // Research is best-effort: a busy Gemini must never break the build.
+      return null;
+    }
+  })();
+
+  const session: ResearchSession = {
+    prompt: userPrompt,
+    promise,
+    notes: null,
+    injected: false,
+    specialistLabel: specialist.label,
+  };
+  promise.then(notes => {
+    session.notes = notes;
+    if (notes) {
+      emitAiStatus({
+        kind: 'team-parallel',
+        slotId: specialist.id,
+        label: specialist.label,
+        message: `${specialist.label} finished its parallel research — notes ready for the builder.`,
+        timestamp: Date.now(),
+      });
+    }
+  });
+  researchSessions[sessionId] = session;
+};
+
+/** Result of a (possibly still-running) research session. */
+export type TeamResearchResult = {|
+  notes: string,
+  providerLabel: string,
+|};
+
+/**
+ * Wait (bounded) for the research notes of a session; null when absent,
+ * unavailable or not ready in time.
+ */
+export const getTeamResearchNotes = async (
+  sessionId: string,
+  waitMs: number
+): Promise<?TeamResearchResult> => {
+  const session = researchSessions[sessionId];
+  if (!session) return null;
+  const resolve = (): ?TeamResearchResult =>
+    session.notes
+      ? { notes: session.notes, providerLabel: session.specialistLabel }
+      : null;
+  if (session.notes !== null && session.notes !== undefined) {
+    return resolve();
+  }
+  const deadline = Date.now() + waitMs;
+  for (;;) {
+    if (session.notes !== null && session.notes !== undefined) {
+      return resolve();
+    }
+    if (Date.now() >= deadline) return null;
+    await sleep(Math.min(1000, Math.max(0, deadline - Date.now())));
+    // Also resolve when the underlying promise has settled empty.
+    const done = await Promise.race([
+      session.promise.then(() => true),
+      sleep(0).then(() => false),
+    ]);
+    if (done) {
+      return resolve();
+    }
+  }
+};
+
+/**
+ * Inject the arrived research notes into the builder's message list (as a
+ * system note) — once per session step. Returns true when injected.
+ */
+export const injectResearchNotesIntoMessages = (
+  sessionId: string,
+  messages: Array<any>
+): boolean => {
+  const session = researchSessions[sessionId];
+  if (!session || session.injected) return false;
+  if (!session.notes) return false;
+  messages.push({
+    role: 'system',
+    content: `TEAM RESEARCH NOTES (from the researcher AI, working in parallel — use them to improve what you build):\n${session.notes}`,
+  });
+  session.injected = true;
+  return true;
+};
+
+/** Forget a session's research (called when the conversation is reset). */
+export const clearTeamResearch = (sessionId?: ?string): void => {
+  if (sessionId) {
+    delete researchSessions[sessionId];
+  } else {
+    Object.keys(researchSessions).forEach(key => {
+      delete researchSessions[key];
+    });
+  }
+};
+
+// ---------------------------------------------------------------------------
 // Specialist tools: ask_specialist + web_search
 // ---------------------------------------------------------------------------
 
@@ -1065,9 +1360,10 @@ export const webSearch = async (query: string): Promise<string> => {
     const url = `${GEMINI_NATIVE_BASE_URL}/models/${
       geminiSlot.model
     }:generateContent?key=${encodeURIComponent(geminiSlot.apiKey.trim())}`;
-    const response = await axios.post(
-      url,
-      {
+    const response = await aiFetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: {
         contents: [
           {
             role: 'user',
@@ -1080,8 +1376,8 @@ export const webSearch = async (query: string): Promise<string> => {
         ],
         tools: [{ google_search: {} }],
       },
-      { timeout: 45000 }
-    );
+      timeoutMs: 45000,
+    });
 
     const candidate =
       response.data && response.data.candidates && response.data.candidates[0];

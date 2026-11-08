@@ -59,9 +59,61 @@ import CompactSelectField from '../../UI/CompactSelectField';
 import useAlertDialog from '../../UI/Alert/useAlertDialog';
 import { type FileMetadata } from '../../ProjectsStorage';
 import Stop from '../../UI/CustomSvgIcons/Stop';
+import { subscribeAiStatus, type AiStatusEvent } from '../MultiAiOrchestrator';
 
 const TOO_MANY_USER_MESSAGES_WARNING_COUNT = 15;
 const TOO_MANY_USER_MESSAGES_ERROR_COUNT = 20;
+
+/**
+ * Live line above the chat input showing what the AI TEAM is doing right
+ * now (builder working, researcher running in parallel, provider retries,
+ * queueing). Replaces the previous silent "Thinking about your request..."
+ * during multi-step agent runs.
+ */
+const AiTeamLiveStatus = ({ visible }: {| visible: boolean |}): React.Node => {
+  const [lastEvent, setLastEvent] = React.useState<?AiStatusEvent>(null);
+  React.useEffect(() => {
+    if (!visible) return;
+    const unsubscribe = subscribeAiStatus(event => {
+      setLastEvent(event);
+    });
+    return unsubscribe;
+  }, [visible]);
+
+  if (!visible || !lastEvent) return null;
+  const isError = lastEvent.kind === 'team-exhausted';
+  return (
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'flex-start',
+        gap: 6,
+        padding: '4px 8px',
+        marginBottom: 4,
+        borderRadius: 6,
+        fontSize: 12,
+        lineHeight: 1.35,
+        background: isError
+          ? 'rgba(229, 57, 53, 0.08)'
+          : 'rgba(251, 140, 0, 0.08)',
+        color: isError ? '#c62828' : '#8d6e63',
+      }}
+    >
+      <span
+        style={{
+          width: 8,
+          height: 8,
+          marginTop: 3,
+          borderRadius: 999,
+          flexShrink: 0,
+          background: isError ? '#e53935' : '#fb8c00',
+          animation: 'gd-ai-pulse 1.2s infinite',
+        }}
+      />
+      <span>{lastEvent.message}</span>
+    </div>
+  );
+};
 
 const styles = {
   chatScrollView: {
@@ -799,7 +851,9 @@ export const AiRequestChat: React.ComponentType<{
                 justifyContent="stretch"
               >
                 {!shouldReplaceFormWithCreditsOrSubscriptionPrompt ? (
-                  <CompactTextAreaFieldWithControls
+                  <>
+                    <AiTeamLiveStatus visible={isWorking} />
+                    <CompactTextAreaFieldWithControls
                     maxLength={6000}
                     value={userRequestTextPerAiRequestId[''] || ''}
                     disabled={isWorking}
@@ -848,6 +902,7 @@ export const AiRequestChat: React.ComponentType<{
                       </Column>
                     }
                   />
+                  </>
                 ) : (
                   <div
                     className={classNames({
@@ -1119,7 +1174,9 @@ export const AiRequestChat: React.ComponentType<{
           >
             {/* $FlowFixMe[constant-condition] */}
             {!standAloneForm && (
-              <CompactTextAreaFieldWithControls
+              <>
+                <AiTeamLiveStatus visible={isWorking} />
+                <CompactTextAreaFieldWithControls
                 maxLength={6000}
                 value={userRequestTextPerAiRequestId[aiRequestId] || ''}
                 disabled={isWorking || isForAnotherProject}
@@ -1169,6 +1226,7 @@ export const AiRequestChat: React.ComponentType<{
                   </Column>
                 }
               />
+              </>
             )}
             <LineStackLayout
               noMargin

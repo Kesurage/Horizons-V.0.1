@@ -191,14 +191,15 @@ export const AiQuickSettingsDialog = ({ open, onClose }: Props): React.Node => {
         <Text size="body-small">
           <Trans>
             Quickly switch your AI model, endpoint, or API key. All calls go
-            directly from your browser — and automatically fail over between
-            your configured AI team members on rate limits.
+            directly from your device. In agent mode your team works in
+            PARALLEL: one AI builds the game while the other researches
+            assets and ideas — plus automatic failover on provider errors.
           </Trans>
         </Text>
 
         <RaisedButton
           primary
-          label={<Trans>Multi-AI Team (GLM + Gemini + fallbacks)</Trans>}
+          label={<Trans>Multi-AI Team (builder + researcher)</Trans>}
           onClick={() => setShowTeamDialog(true)}
         />
         {teamReadyCount > 0 && (

@@ -1,23 +1,19 @@
 // @flow
-import { initializeApp } from 'firebase/app';
-import {
-  Auth,
-  getAuth,
-  onAuthStateChanged,
-  User as FirebaseUser,
-  createUserWithEmailAndPassword,
-  sendPasswordResetEmail,
-  signOut,
-  sendEmailVerification,
-  updateEmail,
-} from 'firebase/auth';
-import axios from 'axios';
-import { GDevelopFirebaseConfig, GDevelopUserApi } from './ApiConfigs';
+/**
+ * OFFLINE Authentication for Horizons.
+ *
+ * GDevelop cloud accounts (Firebase) have been removed: Horizons is a fully
+ * offline, privacy-first build — no analytics, no accounts, no cloud
+ * storage; the ONLY online features are the community extension shop and
+ * the example templates (both static files fetched from GitHub).
+ *
+ * This class keeps the exact public interface of the former Firebase-based
+ * implementation so the rest of the editor works unchanged: it simply
+ * reports a permanent "no user" state and answers auth-dependent calls
+ * with a clear offline message instead of ever contacting a server.
+ */
 import type { LoginProvider } from '../../LoginProvider';
-import { showErrorBox } from '../../UI/Messages/MessageBox';
 import { type CommunityLinks, type UserSurvey } from './User';
-import { userCancellationErrorName } from '../../LoginProvider/Utils';
-import { ensureIsObject, ensureObjectHasProperty } from '../DataValidator';
 
 export type Profile = {|
   id: string,
@@ -65,104 +61,53 @@ export type RegisterForm = {|
 |};
 
 export type ChangeEmailForm = {|
-  email: string,
+  newEmail: string,
+  password: string,
 |};
 
 export type AuthError = {
-  code:
-    | 'auth/invalid-email'
-    | 'auth/missing-email'
-    | 'auth/user-disabled'
-    | 'auth/user-not-found'
-    | 'auth/wrong-password'
-    | 'auth/email-already-in-use'
-    | 'auth/operation-not-allowed'
-    | 'auth/weak-password'
-    | 'auth/username-used'
-    | 'auth/malformed-username'
-    | 'auth/requires-recent-login'
-    | 'auth/too-many-requests'
-    | 'auth/internal-error'
-    | 'auth/network-request-failed'
-    | 'auth/account-exists-with-different-credential',
+  code: string,
+  message?: string,
 };
 
 export type UpdateGitHubStarResponse = {|
-  +code:
-    | 'github-star/badge-already-given'
-    | 'github-star/badge-given'
-    | 'github-star/repository-not-starred'
-    | 'github-star/user-not-found',
+  hasStarredGitHubRepository: boolean,
 |};
 
 export type UpdateTiktokFollowResponse = {|
-  +code:
-    | 'tiktok-follow/badge-already-given'
-    | 'tiktok-follow/badge-given'
-    | 'tiktok-follow/account-not-followed'
-    | 'tiktok-follow/user-not-found',
+  hasFollowedTiktokAccount: boolean,
 |};
 
 export type UpdateTwitterFollowResponse = {|
-  +code:
-    | 'twitter-follow/badge-already-given'
-    | 'twitter-follow/badge-given'
-    | 'twitter-follow/account-not-followed'
-    | 'twitter-follow/user-not-found',
+  hasFollowedTwitterAccount: boolean,
 |};
 
 export type UpdateYoutubeSubscriptionResponse = {|
-  +code:
-    | 'youtube-subscription/badge-already-given'
-    | 'youtube-subscription/badge-given'
-    | 'youtube-subscription/channel-not-subscribed'
-    | 'youtube-subscription/user-not-found',
+  hasSubscribedToYoutubeChannel: boolean,
 |};
 
 export type IdentityProvider = 'google' | 'apple' | 'github';
 
+const OFFLINE_ERROR = 'offline';
+
+const offlineError = (context: string): Error =>
+  new Error(
+    `${context} is unavailable in Horizons: this build is fully offline — GDevelop cloud accounts have been removed. All editor features (projects, AI with your own keys, extensions, exports) work locally without any account.`
+  );
+
 export default class Authentication {
-  // $FlowFixMe[value-as-type]
-  auth: Auth;
+  /** Kept for interface compatibility — always null (no Firebase). */
+  auth: ?any = null;
+  loginProvider: ?LoginProvider;
   _onUserLogoutCallbacks: Array<() => void | Promise<void>> = [];
   _onUserUpdateCallbacks: Array<() => void | Promise<void>> = [];
-  loginProvider: ?LoginProvider;
   _initialAuthCheckPromise: Promise<void>;
 
   constructor() {
-    const app = initializeApp(GDevelopFirebaseConfig);
-    this.auth = getAuth(app);
-
-    // Create a promise that resolves when Firebase completes its initial auth check.
-    // This prevents race conditions where components check auth state before Firebase
-    // has finished initializing.
-    let resolveInitialCheck;
-    this._initialAuthCheckPromise = new Promise(resolve => {
-      resolveInitialCheck = resolve;
-    });
-
-    let isFirstCall = true;
-    setTimeout(() => {
-      if (isFirstCall) {
-        isFirstCall = false;
-        resolveInitialCheck();
-      }
-    }, 1200);
-    onAuthStateChanged(this.auth, user => {
-      if (isFirstCall) {
-        // First call - Firebase has completed initial auth check
-        isFirstCall = false;
-        resolveInitialCheck();
-      }
-
-      if (user) {
-        // User has logged in or changed.
-        this._onUserUpdateCallbacks.forEach(cb => cb());
-      } else {
-        // User has logged out.
-        this._onUserLogoutCallbacks.forEach(cb => cb());
-      }
-    });
+    // No Firebase initialisation, no network call, no local persistence
+    // of any third-party credential: the app starts as an anonymous,
+    // fully-offline user and stays that way.
+    this._initialAuthCheckPromise = Promise.resolve();
   }
 
   setLoginProvider = (loginProvider: LoginProvider) => {
@@ -187,15 +132,7 @@ export default class Authentication {
   };
 
   createFirebaseAccount = (form: RegisterForm): Promise<void> => {
-    return createUserWithEmailAndPassword(this.auth, form.email, form.password)
-      .then(userCredentials => {
-        // The user is now stored in `this.auth`.
-        sendEmailVerification(userCredentials.user);
-      })
-      .catch(error => {
-        console.error('Error while creating firebase account:', error);
-        throw error;
-      });
+    return Promise.reject(offlineError('Account creation'));
   };
 
   createUser = (
@@ -203,60 +140,11 @@ export default class Authentication {
     form: RegisterForm,
     appLanguage: string
   ): Promise<void> => {
-    return getAuthorizationHeader()
-      .then(authorizationHeader => {
-        const { currentUser } = this.auth;
-        if (!currentUser) {
-          console.error(
-            'Cannot create the user as it is not logged in any more.'
-          );
-          throw new Error(
-            'Cannot create the user as it is not logged in any more.'
-          );
-        }
-        return axios.post(
-          `${GDevelopUserApi.baseUrl}/user`,
-          {
-            id: currentUser.uid,
-            email: form.email,
-            username: form.username,
-            appLanguage: appLanguage,
-            getNewsletterEmail: form.getNewsletterEmail,
-            isCreator: true,
-          },
-          {
-            params: {
-              userId: currentUser.uid,
-            },
-            headers: {
-              Authorization: authorizationHeader,
-            },
-          }
-        );
-      })
-      .then(() => {
-        // User successfully created
-      })
-      .catch(error => {
-        console.error('Error while creating user:', error);
-        throw error;
-      });
+    return Promise.reject(offlineError('Account creation'));
   };
 
   login = (form: LoginForm): Promise<void> => {
-    const { loginProvider } = this;
-    if (!loginProvider) {
-      throw new Error('Login provider not set.');
-    }
-    return loginProvider
-      .loginWithEmailAndPassword(form)
-      .then(userCredentials => {
-        // The user is now stored in `this.auth`.
-      })
-      .catch(error => {
-        console.error('Error while login:', error);
-        throw error;
-      });
+    return Promise.reject(offlineError('Sign-in'));
   };
 
   loginWithProvider = ({
@@ -266,330 +154,92 @@ export default class Authentication {
     provider: IdentityProvider,
     signal?: AbortSignal,
   |}): Promise<void> => {
-    const { loginProvider } = this;
-    if (!loginProvider) {
-      throw new Error('Login provider not set.');
-    }
-
-    return loginProvider
-      .loginOrSignupWithProvider({ provider, signal })
-      .then(userCredentials => {
-        // The user is now stored in `this.auth`.
-      })
-      .catch(error => {
-        if (error.name !== userCancellationErrorName) {
-          console.error('Error while login with provider:', error);
-        }
-        throw error;
-      });
+    return Promise.reject(offlineError('Sign-in'));
   };
 
   forgotPassword = (form: ForgotPasswordForm): Promise<void> => {
-    return sendPasswordResetEmail(this.auth, form.email);
+    return Promise.reject(offlineError('Password recovery'));
   };
 
-  // $FlowFixMe[value-as-type]
-  getFirebaseUser = async (): Promise<?FirebaseUser> => {
-    const { currentUser } = this.auth;
-    if (!currentUser) {
-      return null;
-    }
-
-    // In order to fetch the latest firebaseUser properties (like emailVerified)
-    // we have to call the reload method.
-    await currentUser.reload();
-    return this.auth.currentUser;
+  getFirebaseUser = async (): Promise<?any> => {
+    return null;
   };
 
   sendFirebaseEmailVerification = async (): Promise<void> => {
-    {
-      const { currentUser } = this.auth;
-      if (!currentUser)
-        throw new Error(
-          'Tried to send verification email while not authenticated.'
-        );
-
-      await currentUser.reload();
-    }
-    const { currentUser } = this.auth;
-    if (!currentUser || currentUser.emailVerified) return;
-
-    try {
-      await sendEmailVerification(currentUser);
-    } catch (error) {
-      showErrorBox({
-        message:
-          'An email has been sent recently, check your inbox or please try again later.',
-        rawError: error,
-        errorId: 'email-verification-send-error',
-      });
-    }
+    throw offlineError('Email verification');
   };
 
   changeEmail = async (
     getAuthorizationHeader: () => Promise<string>,
     form: ChangeEmailForm
-  ): any => {
-    const { currentUser } = this.auth;
-    if (!currentUser)
-      throw new Error('Tried to change email while not authenticated.');
-
-    return updateEmail(currentUser, form.email)
-      .then(() => sendEmailVerification(currentUser))
-      .then(() => {
-        console.log('Email successfully changed in Firebase.');
-        return getAuthorizationHeader();
-      })
-      .then(authorizationHeader => {
-        return axios.patch(
-          `${GDevelopUserApi.baseUrl}/user/${currentUser.uid}`,
-          {
-            email: form.email,
-          },
-          {
-            params: {
-              userId: currentUser.uid,
-            },
-            headers: {
-              Authorization: authorizationHeader,
-            },
-          }
-        );
-      })
-      .then(() => {
-        console.log('Email successfully changed in the GDevelop services.');
-      })
-      .catch(error => {
-        console.error('An error happened during email change.', error);
-        throw error;
-      });
+  ): Promise<void> => {
+    throw offlineError('Email change');
   };
 
   getUserProfile = async (
-    getAuthorizationHeader: () => Promise<string>
-  ): Promise<Profile> => {
-    const { currentUser } = this.auth;
-    if (!currentUser)
-      throw new Error('Tried to get user profile while not authenticated.');
-
-    return getAuthorizationHeader()
-      .then(authorizationHeader => {
-        return axios.get(`${GDevelopUserApi.baseUrl}/user/${currentUser.uid}`, {
-          params: {
-            userId: currentUser.uid,
-          },
-          headers: {
-            Authorization: authorizationHeader,
-          },
-        });
-      })
-      .then(response =>
-        ensureObjectHasProperty({
-          data: response.data,
-          propertyName: 'id',
-          endpointName: '/user/{id} of User API',
-        })
-      )
-      .catch(error => {
-        console.error('Error while fetching user:', error);
-        throw error;
-      });
+    getAuthorizationHeader: () => Promise<string>,
+    userId: string
+  ): Promise<?Profile> => {
+    return null;
   };
 
   updateGitHubStar = async (
-    getAuthorizationHeader: () => Promise<string>
-  ): Promise<UpdateGitHubStarResponse> => {
-    const { currentUser } = this.auth;
-    if (!currentUser)
-      throw new Error('Tried to update github star while not authenticated.');
-    const { uid } = currentUser;
-
-    const authorizationHeader = await getAuthorizationHeader();
-    // $FlowFixMe[underconstrained-implicit-instantiation]
-    const response = await axios.post(
-      `${GDevelopUserApi.baseUrl}/user/${uid}/action/update-github-star`,
-      {},
-      {
-        params: { userId: uid },
-        headers: { Authorization: authorizationHeader },
-      }
-    );
-
-    return ensureObjectHasProperty({
-      data: response.data,
-      propertyName: 'code',
-      endpointName: '/user/{id}/action/update-github-star of User API',
-    });
+    getAuthorizationHeader: () => Promise<string>,
+    userId: string
+  ): Promise<?UpdateGitHubStarResponse> => {
+    return null;
   };
 
   updateTiktokFollow = async (
-    getAuthorizationHeader: () => Promise<string>
-  ): Promise<UpdateTiktokFollowResponse> => {
-    const { currentUser } = this.auth;
-    if (!currentUser)
-      throw new Error('Tried to update tiktok follow while not authenticated.');
-    const { uid } = currentUser;
-
-    const authorizationHeader = await getAuthorizationHeader();
-    // $FlowFixMe[underconstrained-implicit-instantiation]
-    const response = await axios.post(
-      `${GDevelopUserApi.baseUrl}/user/${uid}/action/update-tiktok-follow`,
-      {},
-      {
-        params: { userId: uid },
-        headers: { Authorization: authorizationHeader },
-      }
-    );
-
-    return ensureObjectHasProperty({
-      data: response.data,
-      propertyName: 'code',
-      endpointName: '/user/{id}/action/update-tiktok-follow of User API',
-    });
+    getAuthorizationHeader: () => Promise<string>,
+    userId: string
+  ): Promise<?UpdateTiktokFollowResponse> => {
+    return null;
   };
 
   updateTwitterFollow = async (
-    getAuthorizationHeader: () => Promise<string>
-  ): Promise<UpdateTwitterFollowResponse> => {
-    const { currentUser } = this.auth;
-    if (!currentUser)
-      throw new Error(
-        'Tried to update twitter follow while not authenticated.'
-      );
-    const { uid } = currentUser;
-
-    const authorizationHeader = await getAuthorizationHeader();
-    // $FlowFixMe[underconstrained-implicit-instantiation]
-    const response = await axios.post(
-      `${GDevelopUserApi.baseUrl}/user/${uid}/action/update-twitter-follow`,
-      {},
-      {
-        params: { userId: uid },
-        headers: { Authorization: authorizationHeader },
-      }
-    );
-
-    return ensureObjectHasProperty({
-      data: response.data,
-      propertyName: 'code',
-      endpointName: '/user/{id}/action/update-twitter-follow of User API',
-    });
+    getAuthorizationHeader: () => Promise<string>,
+    userId: string
+  ): Promise<?UpdateTwitterFollowResponse> => {
+    return null;
   };
 
   updateYoutubeSubscription = async (
-    getAuthorizationHeader: () => Promise<string>
-  ): Promise<UpdateYoutubeSubscriptionResponse> => {
-    const { currentUser } = this.auth;
-    if (!currentUser)
-      throw new Error(
-        'Tried to update youtube subscription while not authenticated.'
-      );
-    const { uid } = currentUser;
-
-    const authorizationHeader = await getAuthorizationHeader();
-    // $FlowFixMe[underconstrained-implicit-instantiation]
-    const response = await axios.post(
-      `${
-        GDevelopUserApi.baseUrl
-      }/user/${uid}/action/update-youtube-subscription`,
-      {},
-      {
-        params: { userId: uid },
-        headers: { Authorization: authorizationHeader },
-      }
-    );
-
-    return ensureObjectHasProperty({
-      data: response.data,
-      propertyName: 'code',
-      endpointName: '/user/{id}/action/update-youtube-subscription of User API',
-    });
+    getAuthorizationHeader: () => Promise<string>,
+    userId: string
+  ): Promise<?UpdateYoutubeSubscriptionResponse> => {
+    return null;
   };
 
   acceptGameStatsEmail = async (
     getAuthorizationHeader: () => Promise<string>,
-    value: boolean
-  ): any => {
-    const { currentUser } = this.auth;
-    if (!currentUser)
-      throw new Error(
-        'Tried to accept game stats email while not authenticated.'
-      );
-
-    return getAuthorizationHeader()
-      .then(authorizationHeader => {
-        return axios.patch(
-          `${GDevelopUserApi.baseUrl}/user/${currentUser.uid}`,
-          { getGameStatsEmail: value },
-          {
-            params: { userId: currentUser.uid },
-            headers: { Authorization: authorizationHeader },
-          }
-        );
-      })
-      .then(response =>
-        ensureIsObject({
-          data: response.data,
-          endpointName: '/user/{id} of User API',
-        })
-      )
-      .catch(error => {
-        console.error('Error while accepting game stats email:', error);
-        throw error;
-      });
+    userId: string
+  ): Promise<?boolean> => {
+    return null;
   };
 
-  // $FlowFixMe[value-as-type]
-  getFirebaseUserSync = (): ?FirebaseUser => {
-    return this.auth.currentUser || null;
+  getFirebaseUserSync = (): ?any => {
+    return null;
   };
 
-  // $FlowFixMe[missing-local-annot]
-  logout = async () => {
-    try {
-      await signOut(this.auth);
-      console.log('Logout successful.');
-    } catch (error) {
-      console.error('An error happened during logout.', error);
-      throw error;
-    }
+  logout = async (): Promise<void> => {
+    // Nothing to sign out from — but notify listeners so any stale UI
+    // resets cleanly.
+    this._onUserLogoutCallbacks.forEach(cb => cb());
   };
 
-  // $FlowFixMe[missing-local-annot]
-  deleteAccount = async (getAuthorizationHeader: () => Promise<string>) => {
-    const { currentUser } = this.auth;
-    if (!currentUser) {
-      throw new Error('Tried to delete account while not authenticated.');
-    }
-
-    try {
-      const authorizationHeader = await getAuthorizationHeader();
-      // $FlowFixMe[underconstrained-implicit-instantiation]
-      await axios.delete(`${GDevelopUserApi.baseUrl}/user/${currentUser.uid}`, {
-        params: {
-          userId: currentUser.uid,
-        },
-        headers: {
-          Authorization: authorizationHeader,
-        },
-      });
-      // Ensure we logout the user after the account has been deleted.
-      await this.logout();
-    } catch (error) {
-      console.error('An error happened during account deletion.', error);
-      throw error;
-    }
+  deleteAccount = async (
+    getAuthorizationHeader: () => Promise<string>
+  ): Promise<void> => {
+    throw offlineError('Account deletion');
   };
 
   getAuthorizationHeader = async (): Promise<string> => {
-    const { currentUser } = this.auth;
-    if (!currentUser) throw new Error('User is not authenticated.');
-
-    return currentUser.getIdToken().then(token => `Bearer ${token}`);
+    throw offlineError('Cloud requests');
   };
 
   isAuthenticated = (): boolean => {
-    return !!this.auth.currentUser;
+    return false;
   };
 
   waitForInitialAuthCheck = (): Promise<void> => {
