@@ -193,6 +193,86 @@ export const DEFAULT_PROVIDER_SLOTS: Array<AiProviderSlot> = [
 
 const MULTI_AI_STORAGE_KEY = 'gd-multi-ai-slots-v1';
 const LEGACY_PREFERENCES_KEY = 'gd-preferences';
+
+/**
+ * Read the legacy single-provider preferences (the main "AI Provider"
+ * preferences tab and the quick settings dialog of the AI panel both
+ * write there).
+ *
+ * These values used to be completely ignored by the team request path,
+ * which made users think the AI was broken: they pasted their key in
+ * the obvious place and every request failed with
+ * "No AI provider is ready". `applyLegacyPreferencesOverlay` below fixes it.
+ */
+const readLegacyAiPreferences = (): ?{|
+  baseUrl: string,
+  apiKey: string,
+  model: string,
+|} => {
+  try {
+    if (typeof localStorage === 'undefined') return null;
+    const raw = localStorage.getItem(LEGACY_PREFERENCES_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    const values = parsed && parsed.values;
+    if (!values) return null;
+    const apiKey = (values.aiApiKey || '').trim();
+    if (!apiKey) return null; // Nothing to overlay without a key.
+    return {
+      baseUrl: sanitizeBaseUrl(values.aiBaseUrl || ''),
+      apiKey,
+      model: (values.aiModel || '').trim(),
+    };
+  } catch (ignored) {
+    return null;
+  }
+};
+
+/**
+ * Apply the legacy preferences (main AI Provider tab / quick settings) on top
+ * of the team slots:
+ *  - when the legacy endpoint matches a slot that has no key of its own,
+ *    the key (and model) are used for that slot and it gets enabled;
+ *  - when the legacy endpoint matches no slot at all, a custom slot is added.
+ *
+ * Keys explicitly set in the Multi-AI Team dialog always win (the overlay
+ * only fills slots whose key is empty).
+ */
+const applyLegacyPreferencesOverlay = (
+  slots: Array<AiProviderSlot>
+): Array<AiProviderSlot> => {
+  const legacy = readLegacyAiPreferences();
+  if (!legacy) return slots;
+
+  const matchingSlot = slots.find(
+    slot => sanitizeBaseUrl(slot.baseUrl) === legacy.baseUrl
+  );
+  if (matchingSlot) {
+    if (matchingSlot.keyless) return slots; // local server, no key needed.
+    if (matchingSlot.apiKey && matchingSlot.apiKey.trim().length > 0)
+      return slots; // Team dialog key wins.
+    matchingSlot.apiKey = legacy.apiKey;
+    if (legacy.model) matchingSlot.model = legacy.model;
+    matchingSlot.enabled = true;
+    return slots;
+  }
+
+  // Unknown endpoint: expose it as an additional ready provider.
+  slots.push({
+    id: 'custom-preferences',
+    label: `Custom (${legacy.model || 'own endpoint'})`,
+    baseUrl: legacy.baseUrl,
+    apiKey: legacy.apiKey,
+    model: legacy.model || 'gpt-4o',
+    rpmLimit: 0,
+    enabled: true,
+    role: 'fallback',
+    capabilities: ['text'],
+    keyless: false,
+  });
+  return slots;
+};
+
 const ROLE_PRIORITY: { [AiProviderRole]: number } = {
   primary: 0,
   fallback: 1,
@@ -231,7 +311,7 @@ export const getProviderSlots = (): Array<AiProviderSlot> => {
             merged.push(slot);
           }
         });
-        return cloneSlots(merged);
+        return applyLegacyPreferencesOverlay(cloneSlots(merged));
       }
     }
   } catch (ignored) {
@@ -239,7 +319,7 @@ export const getProviderSlots = (): Array<AiProviderSlot> => {
   }
   const seeded = migrateLegacyConfig(cloneSlots(DEFAULT_PROVIDER_SLOTS));
   saveProviderSlots(seeded);
-  return seeded;
+  return applyLegacyPreferencesOverlay(seeded);
 };
 
 export const saveProviderSlots = (slots: Array<AiProviderSlot>): void => {
@@ -541,9 +621,12 @@ const callSlotChatCompletions = async ({
       payload.thinking = { type: 'disabled' };
     }
 
-    // Transient errors (rate limits, 5xx, timeouts, network blips) are
-    // retried on the same provider before failing over to the next one.
-    const maxAttempts = 3;
+    // Transient errors (5xx, timeouts, network blips) are retried once on the
+    // same provider before failing over to the next one.
+    // Rate limits (429) are NOT retried here: the provider goes into cooldown
+    // and the next provider of the team takes the request immediately —
+    // waiting minutes on a rate-limited free tier is the worst UX.
+    const maxAttempts = 2;
     let lastError: any = null;
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       runtime.requestTimestamps.push(Date.now());
@@ -565,11 +648,13 @@ const callSlotChatCompletions = async ({
               error.response ? error.response.status : 429
             })`
           );
-        } else if (isServerError(error)) {
+          // Fail over immediately — another team member answers now.
+          throw error;
+        }
+        if (isServerError(error)) {
           cooldownSlot(slot, 15000, `${slot.label} had a server error`);
         }
         const retryable =
-          isRateLimitError(error) ||
           isServerError(error) ||
           (error &&
             (error.code === 'ECONNABORTED' ||
@@ -578,8 +663,8 @@ const callSlotChatCompletions = async ({
           throw error;
         }
         const backoffMs = Math.min(
-          extractRetryAfterMs(error) || 3000 * attempt,
-          30000
+          extractRetryAfterMs(error) || 2000 * attempt,
+          15000
         );
         emitAiStatus({
           kind: 'request-retry',
@@ -608,6 +693,15 @@ export type OrchestratedResult = {|
   providerLabel: string,
   model: string,
 |};
+
+/**
+ * How long before the slot gets out of cooldown (0 = ready now).
+ */
+export const getSlotCooldownRemainingMs = (slotId: string): number => {
+  const runtime = runtimes[slotId];
+  if (!runtime) return 0;
+  return Math.max(runtime.cooldownUntil - Date.now(), 0);
+};
 
 /**
  * Send a chat-completions request through the provider team:
@@ -658,6 +752,33 @@ export const chatCompletionWithFailover = async ({
   const errors: Array<string> = [];
   for (let index = 0; index < chain.length; index++) {
     const slot = chain[index];
+    // A cooling-down provider is skipped when another ready team member can
+    // answer right now — never make the user wait for a cooldown when a
+    // failover target is available. If it is the last usable option, we
+    // still wait for it (better late than "no provider available").
+    const cooldownRemainingMs = getSlotCooldownRemainingMs(slot.id);
+    if (cooldownRemainingMs > 0 && index < chain.length - 1) {
+      const anotherReadySlot = chain
+        .slice(index + 1)
+        .some(laterSlot => getSlotCooldownRemainingMs(laterSlot.id) === 0);
+      if (anotherReadySlot) {
+        emitAiStatus({
+          kind: 'provider-cooldown',
+          slotId: slot.id,
+          label: slot.label,
+          message: `${slot.label} is cooling down (${Math.ceil(
+            cooldownRemainingMs / 1000
+          )}s left) — trying the next team member instead.`,
+          timestamp: Date.now(),
+        });
+        errors.push(
+          `${slot.label}: skipped (cooling down ${Math.ceil(
+            cooldownRemainingMs / 1000
+          )}s after a rate limit)`
+        );
+        continue;
+      }
+    }
     if (index > 0 && onStatus) {
       onStatus(
         `Failing over to ${slot.label}... (previous provider unavailable)`

@@ -955,6 +955,12 @@ When asked to adapt existing events, you may receive the existing events; prefer
 /**
  * Convert a GDevelop AiRequest output (array of messages) into OpenAI chat
  * messages, preserving tool calls and tool results.
+ *
+ * Robustness: if the conversation contains tool calls that were never
+ * answered (e.g. a previous request failed after the model called a tool),
+ * a synthetic tool result is injected. Without this, providers reject every
+ * follow-up message with "tool_calls must be followed by tool messages"
+ * (HTTP 400) and the editor re-executes the same tool over and over.
  */
 export const convertGDevelopOutputToOpenAiMessages = (
   output: Array<any>
@@ -968,6 +974,14 @@ export const convertGDevelopOutputToOpenAiMessages = (
       pendingAssistant = null;
     }
   };
+
+  // First pass: remember which tool calls already have a result.
+  const answeredCallIds = new Set<string>();
+  (output || []).forEach((message: any) => {
+    if (message.type === 'function_call_output' && message.call_id) {
+      answeredCallIds.add(message.call_id);
+    }
+  });
 
   (output || []).forEach((message: any) => {
     if (message.type === 'message' && message.role === 'user') {
@@ -1037,7 +1051,28 @@ export const convertGDevelopOutputToOpenAiMessages = (
     }
   });
   flushAssistant();
-  return chatMessages;
+
+  // Second pass: heal dangling tool calls — inject a synthetic tool result
+  // for every tool call that never got one, so the message sequence stays
+  // valid for every OpenAI-compatible provider.
+  const healed: Array<any> = [];
+  chatMessages.forEach(chatMessage => {
+    healed.push(chatMessage);
+    if (chatMessage.role === 'assistant' && chatMessage.tool_calls) {
+      chatMessage.tool_calls.forEach((toolCall: any) => {
+        if (!answeredCallIds.has(toolCall.id)) {
+          healed.push({
+            role: 'tool',
+            tool_call_id: toolCall.id,
+            content:
+              'The function call was interrupted (the AI request failed before it could be run). The result is unknown. If you still need this action, call the function again; otherwise continue and answer the user.',
+          });
+        }
+      });
+    }
+  });
+
+  return healed;
 };
 
 /**

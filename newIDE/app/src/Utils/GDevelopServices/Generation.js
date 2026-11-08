@@ -54,6 +54,47 @@ const getStoredAiConfig = () => {
   };
 };
 
+/**
+ * Build synthetic "interrupted" results for every tool call of the
+ * conversation that never received its result (e.g. the provider request
+ * failed after the model had called a tool).
+ *
+ * Without these, the editor sees the tool call as "to process" and
+ * re-executes it again and again (duplicating project changes and
+ * re-triggering the failing request), and providers reject the next
+ * message with a 400 "tool_calls must be followed by tool messages".
+ */
+const synthesizeOutputsForDanglingFunctionCalls = (
+  output: Array<any>
+): Array<any> => {
+  const answeredCallIds = new Set<string>();
+  (output || []).forEach(message => {
+    if (message.type === 'function_call_output' && message.call_id) {
+      answeredCallIds.add(message.call_id);
+    }
+  });
+  const synthesized: Array<any> = [];
+  (output || []).forEach(message => {
+    if (message.type === 'message' && message.role === 'assistant') {
+      (message.content || []).forEach(item => {
+        if (item.type === 'function_call' && !answeredCallIds.has(item.call_id)) {
+          synthesized.push({
+            type: 'function_call_output',
+            call_id: item.call_id,
+            output: JSON.stringify({
+              success: false,
+              interrupted: true,
+              message:
+                'The function call was interrupted: the AI request failed before its result could be sent back. The action was NOT applied.',
+            }),
+          });
+        }
+      });
+    }
+  });
+  return synthesized;
+};
+
 export type Environment = 'staging' | 'live';
 
 export type GenerationStatus = 'working' | 'ready' | 'error' | 'suspended';
@@ -639,6 +680,12 @@ export const addMessageToAiRequest = async (
       customSystemPrompt: config.customSystemPrompt,
     });
 
+    // Close any tool call that was left dangling by an earlier failure so
+    // the editor never re-executes it and the conversation stays valid.
+    const danglingOutputs = synthesizeOutputsForDanglingFunctionCalls(
+      fullOutput
+    );
+
     const { messages: assistantMessages } = await runUniversalAiTurn({
       config,
       systemPrompt,
@@ -652,12 +699,17 @@ export const addMessageToAiRequest = async (
       updatedAt: new Date().toISOString(),
       status: 'ready',
       mode: effectiveMode,
-      output: [...fullOutput, ...assistantMessages],
+      output: [...fullOutput, ...danglingOutputs, ...assistantMessages],
     };
 
     saveLocalAiRequest(updatedRequest);
     return updatedRequest;
   } catch (err) {
+    // Close any dangling tool call so the editor does not re-execute it
+    // (which would loop: execute -> send -> fail -> execute again...).
+    const danglingOutputs = synthesizeOutputsForDanglingFunctionCalls(
+      fullOutput
+    );
     const errorAssistantMsg: AiRequestAssistantMessage = {
       type: 'message',
       status: 'completed',
@@ -676,7 +728,7 @@ export const addMessageToAiRequest = async (
       ...existingRequest,
       updatedAt: new Date().toISOString(),
       status: 'ready',
-      output: [...updatedOutput, errorAssistantMsg],
+      output: [...fullOutput, ...danglingOutputs, errorAssistantMsg],
     };
     saveLocalAiRequest(updatedRequest);
     return updatedRequest;

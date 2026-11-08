@@ -136,6 +136,31 @@ export const getChatCompletionsUrl = (rawUrl: ?string): string =>
   `${sanitizeBaseUrl(rawUrl)}/chat/completions`;
 
 /**
+ * Extract the human-readable message a provider put in an error response.
+ * Handles all the common body shapes, including Gemini's OpenAI-compat
+ * endpoint which replies with an ARRAY: [{"error": {...}}].
+ */
+const extractProviderErrorMessage = (data: any): ?string => {
+  if (!data) return null;
+  // Gemini OpenAI-compat: [{"error": {"message": ...}}]
+  if (Array.isArray(data)) {
+    for (const item of data) {
+      const message = extractProviderErrorMessage(item);
+      if (message) return message;
+    }
+    return null;
+  }
+  if (typeof data === 'string') return data.slice(0, 300);
+  if (data.error) {
+    if (typeof data.error === 'string') return data.error;
+    if (typeof data.error.message === 'string') return data.error.message;
+  }
+  if (typeof data.message === 'string') return data.message;
+  if (typeof data.msg === 'string') return data.msg;
+  return null;
+};
+
+/**
  * Turn any request error into a human-readable, actionable message
  * (extracts the provider's own error message when available).
  */
@@ -143,12 +168,13 @@ export const describeAiError = (error: any, baseUrl: string): string => {
   const response = error && error.response;
   if (response) {
     const status = response.status;
-    const providerMessage =
-      response.data && response.data.error && response.data.error.message
-        ? response.data.error.message
-        : response.data && typeof response.data.message === 'string'
-        ? response.data.message
-        : null;
+    const providerMessage = extractProviderErrorMessage(response.data);
+    if (status === 400) {
+      // Most useful for debugging: providers explain the exact bad parameter.
+      return `The provider rejected the request (HTTP 400).${
+        providerMessage ? ` Provider says: "${providerMessage}"` : ''
+      } This is usually a wrong model name or a parameter the endpoint does not support.`;
+    }
     if (status === 401 || status === 403) {
       return `The provider rejected the API key (HTTP ${status}).${
         providerMessage ? ` Provider says: "${providerMessage}"` : ''
@@ -237,6 +263,9 @@ export const testAiConnection = async (config: {
       headers['Authorization'] = `Bearer ${config.apiKey.trim()}`;
     }
 
+    // 256 tokens: enough for reasoning models (GLM 4.x "thinking" mode) to
+    // still produce visible output — with the old 10-token budget they
+    // replied "" (all tokens spent reasoning), which looked like a failure.
     const payload = {
       model: config.model.trim() || 'gpt-4o',
       messages: [
@@ -245,13 +274,13 @@ export const testAiConnection = async (config: {
           content: 'Reply with "OK" only.',
         },
       ],
-      max_tokens: 10,
+      max_tokens: 256,
       temperature: 0.1,
     };
 
     const response = await axios.post(`${baseUrl}/chat/completions`, payload, {
       headers,
-      timeout: 30000,
+      timeout: 45000,
     });
 
     const latencyMs = Date.now() - startTime;
@@ -260,10 +289,31 @@ export const testAiConnection = async (config: {
       response.data.choices &&
       response.data.choices.length > 0
     ) {
-      const reply = response.data.choices[0].message?.content || 'Success';
+      const message = response.data.choices[0].message;
+      const reply = ((message && message.content) || '').trim();
+      // Reasoning models can answer with an empty content but a
+      // reasoning_content — still a successful connection.
+      const reasoning = (message && message.reasoning_content) || '';
+      if (reply) {
+        return {
+          success: true,
+          message: `Connected successfully! Model replied in ${latencyMs}ms: "${reply.slice(
+            0,
+            120
+          )}"`,
+          latencyMs,
+        };
+      }
+      if (reasoning) {
+        return {
+          success: true,
+          message: `Connected in ${latencyMs}ms. The model is a reasoning model (it "thinks" before answering) — replies may take a little longer.`,
+          latencyMs,
+        };
+      }
       return {
         success: true,
-        message: `Connected successfully! Model replied in ${latencyMs}ms: "${reply.trim()}"`,
+        message: `Connection successful (${latencyMs}ms).`,
         latencyMs,
       };
     }

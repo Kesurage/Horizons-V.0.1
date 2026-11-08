@@ -138,37 +138,47 @@ jobs:
       - name: Rename APK
         run: |
           mkdir -p release
-          cp capacitor-app/android/app/build/outputs/apk/release/app-release.apk release/Horizons-v0.2.1.apk
+          cp capacitor-app/android/app/build/outputs/apk/release/app-release.apk release/Horizons-v0.2.2.apk
           ls -la release/
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: horizons-apk
-          path: release/Horizons-v0.2.1.apk
+          path: release/Horizons-v0.2.2.apk
           retention-days: 30
 
       - name: Publish to GitHub Releases
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.2.1
-          name: Horizons V.0.2.1 — working preview, offline runtime, AI fixes
+          tag_name: v0.2.2
+          name: Horizons V.0.2.2 — AI team fixed (GLM + Gemini actually responding)
           body: |
-            ## Horizons V.0.2.1 APK
+            ## Horizons V.0.2.2 APK
 
-            Install: download `Horizons-v0.2.1.apk` on your Android device and open it (allow "install from unknown sources").
+            Install: download `Horizons-v0.2.2.apk` on your Android device and open it (allow "install from unknown sources").
 
-            ### Fixes & changes
-            - **Preview now works inside the app** — games run in a full-screen in-app preview (with reload/close), no more silently-failing popups
-            - **Fully offline previews & HTML5 exports** — the whole GDJS game runtime (incl. Dialogue Tree/Yarn files) is bundled in the app
-            - **AI team upgrades**: model auto-discovery ("Discover models"), detailed error messages with fixes, retry with backoff, live slot health, add/remove providers, reset rate windows
-            - **GDevelop services removed**: no accounts, subscriptions or online build gates — only extension/asset downloads and free tutorials stay online
-            - **Real file saving**: HTML5 export and project saves go to the folder you pick (File System Access API)
-            - **Yarn editor unlocked for local projects** + Dialogue Tree runtime files bundled
-            - Touch scrolling and UI polish
+            ### The AI is fixed 🎉
+
+            **Every AI request was crashing at startup of the reply** (`DEFAULT_AI_SYSTEM_PROMPT is not defined`) and the error handler itself was broken (`describeAiError is not defined`). Both crashes are fixed — chat, agent mode and event generation now actually reach your models:
+
+            - **Fix: crash on every AI message** — a missing import killed each request before it reached the provider
+            - **Fix: crash in the error handler** — provider errors (rate limit, bad key) now show a readable, actionable message instead of breaking the chat
+            - **Fix: keys pasted in Preferences → AI Provider were ignored** — they now flow automatically into the Multi-AI team (GLM primary / Gemini specialist). Keys set in the team dialog keep priority
+            - **Fix: infinite tool-call retry loop** — if a request failed after the model called a tool, the editor re-executed it forever (duplicating project changes). Dangling tool calls are now closed with an "interrupted" result and the conversation recovers
+            - **Fix: HTTP 400 "tool_calls must be followed by tool messages"** — broken conversations are healed automatically before being sent to the provider
+            - **Faster failover on free tiers** — a 429 no longer retries the same provider 3× (up to minutes of silence): the next team member (GLM ↔ Gemini) answers immediately; cooling-down providers are skipped while an alternative is ready
+            - **Better connection test** — works with reasoning models (GLM 4.x thinking) that used to reply "" with the old 10-token budget, and decodes Gemini's array-shaped error bodies
+            - Same as v0.2.1: fully offline editor + GDJS runtime, in-app preview, real file saving, no accounts/subscriptions
+
+            ### Setup (BYOK — bring your own keys)
+
+            1. Get free keys: [Z.ai](https://z.ai) (GLM 4.7 Flash — free) and [Google AI Studio](https://aistudio.google.com) (Gemini Flash — free tier)
+            2. In the app: Preferences → AI Provider → paste your key (GLM or Gemini preset), or "Configure Multi-AI Team" to set both
+            3. Press **Test** to verify, then chat with the AI panel / use agent mode
           draft: false
           prerelease: false
-          files: release/Horizons-v0.2.1.apk
+          files: release/Horizons-v0.2.2.apk
           fail_on_unmatched_files: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

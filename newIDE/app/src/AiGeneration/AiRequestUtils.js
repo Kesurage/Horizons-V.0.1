@@ -257,7 +257,9 @@ export const getLastMessagesFromAiRequestOutput = (
   for (let i = output.length - 1; i >= 0; i--) {
     const message = output[i];
     if (message.type === 'message' && message.role === 'user') {
-      const textContent = message.content.find(c => c.type === 'user_request');
+      const textContent = message.content.find(
+        c => c.type === 'user_request' || c.type === 'input_text'
+      );
       if (textContent) {
         lastUserMessage = textContent.text;
       }
