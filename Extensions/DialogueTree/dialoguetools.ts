@@ -80,7 +80,15 @@ namespace gdjs {
             convertedNodes.push({
               title: extracted.title,
               body: extracted.body,
-              tags: Array.isArray(node.tags) ? node.tags : extracted.tags,
+              // Tags declared in the node header ("tags: a b") win — they are
+              // the ones classic Yarn (and the runtime) uses; the node-level
+              // "tags" array of Yarn Spinner 2 is metadata.
+              tags:
+                extracted.tags.length > 0
+                  ? extracted.tags
+                  : Array.isArray(node.tags)
+                  ? node.tags
+                  : [],
               position: node.position || { x: 0, y: 0 },
             });
             continue;
