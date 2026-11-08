@@ -220,6 +220,80 @@ export const putFile = async (
 };
 
 /**
+ * Reads all "files" stored in IndexedDB with a given path prefix,
+ * decoded back to text. Used by the Horizons app shell to build
+ * self-contained (blob-based) previews of files that were written
+ * outside of an export (e.g. events-functions extension code).
+ */
+export const getAllFilesWithPrefix = async (
+  pathPrefix: string
+): Promise<Array<{|
+  path: string,
+  content: string,
+  contentType: string,
+|}>> => {
+  const db = await openBrowserSWPreviewIndexedDB();
+
+  return new Promise((resolve, reject) => {
+    try {
+      const transaction = db.transaction(STORE_NAME, 'readonly');
+      const objectStore = transaction.objectStore(STORE_NAME);
+      const request = objectStore.openCursor();
+      const files = [];
+
+      request.onsuccess = event => {
+        const cursor = event.target.result;
+        if (cursor) {
+          const key = cursor.key;
+          if (typeof key === 'string' && key.startsWith(pathPrefix)) {
+            const record: ?FileRecord = cursor.value;
+            try {
+              files.push({
+                // Return the path without the leading slash, like the
+                // files returned by BrowserSWFileSystem.getAllWrittenFiles.
+                path: key.replace(/^\//, ''),
+                content:
+                  record && record.bytes
+                    ? new TextDecoder().decode(record.bytes)
+                    : '',
+                contentType:
+                  (record && record.contentType) ||
+                  'application/octet-stream',
+              });
+            } catch (error) {
+              console.warn(
+                '[BrowserSWIndexedDB] Could not decode file stored at:',
+                key,
+                error
+              );
+            }
+          }
+          cursor.continue();
+        } else {
+          resolve(files);
+        }
+      };
+
+      request.onerror = () => {
+        const error = request.error || new Error('Cursor operation failed');
+        console.error(
+          '[BrowserSWIndexedDB] Error during read cursor operation:',
+          error
+        );
+        reject(error);
+      };
+    } catch (error) {
+      console.error(
+        '[BrowserSWIndexedDB] Exception while reading files with prefix:',
+        pathPrefix,
+        error
+      );
+      reject(error);
+    }
+  });
+};
+
+/**
  * Deletes all "files" stored in IndexedDB with a given path prefix.
  *
  * @param pathPrefix - The path prefix to match.

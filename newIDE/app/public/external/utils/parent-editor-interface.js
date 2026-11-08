@@ -26,13 +26,24 @@ export const sendMessageToParentEditor = (id, payload) => {
   if (ipcRenderer) {
     if (payload) ipcRenderer.send(id, payload);
     else ipcRenderer.send(id);
-  } else if (window && window.opener) {
-    window.opener.postMessage({
-      id,
-      payload,
-    }, '*');
   } else {
-    console.error(`Unable to send message ${id} to the main editor.`);
+    // In a browser, the editor runs in a popup window opened by the IDE, so
+    // the IDE is `window.opener`. In the Horizons app shell (Android APK),
+    // the editor runs in an embedded iframe, so the IDE is `window.parent`.
+    const targetWindow =
+      window.opener ||
+      (window.parent && window.parent !== window ? window.parent : null);
+    if (targetWindow) {
+      targetWindow.postMessage(
+        {
+          id,
+          payload,
+        },
+        '*'
+      );
+    } else {
+      console.error(`Unable to send message ${id} to the main editor.`);
+    }
   }
 };
 

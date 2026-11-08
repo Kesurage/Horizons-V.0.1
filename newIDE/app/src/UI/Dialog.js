@@ -33,6 +33,7 @@ import {
   TitleBarRightSafeMargins,
 } from './TitleBarSafeMargins';
 import PortalContainerContext from './PortalContainerContext';
+import { isRunningInCapacitor } from '../Utils/Platform';
 
 let openedDialogsCount = 0;
 
@@ -449,6 +450,14 @@ const DialogWithoutWindowSizeProvider = ({
           : getDefaultMaxWidthFromSize(windowSize)
       }
       disableBackdropClick={false}
+      // In the Horizons app shell (Android APK), external editors (Yarn,
+      // Piskel, ...) and game previews are shown in full-screen iframes.
+      // MUI's focus trap would steal the focus back from the iframe as soon
+      // as the user taps inside it, which prevents the Android soft keyboard
+      // from attaching to inputs in the iframe. Focus enforcement is a
+      // desktop/browser accessibility feature that is not needed in the
+      // touch-only app shell.
+      disableEnforceFocus={isRunningInCapacitor()}
       onKeyDown={handleKeyDown}
       container={portalContainer}
     >

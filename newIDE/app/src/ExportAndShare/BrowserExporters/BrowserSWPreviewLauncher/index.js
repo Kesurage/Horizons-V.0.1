@@ -21,6 +21,7 @@ import { getIDEVersionWithHash } from '../../../Version';
 import {
   getBrowserSWPreviewBaseUrl,
   getBrowserSWPreviewRootUrl,
+  getAllFilesWithPrefix,
 } from './BrowserSWPreviewIndexedDB';
 import { setEmbeddedGameFramePreviewLocation } from '../../../EmbeddedGame/EmbeddedGameFrame';
 import { immediatelyOpenNewPreviewWindow } from '../BrowserPreview/BrowserPreviewWindow';
@@ -446,8 +447,32 @@ export default class BrowserSWPreviewLauncher extends React.Component<
           // (generated files as blob URLs, runtime from the local /Runtime
           // folder) so previews never depend on the service worker.
           try {
+            // Read back the events-functions extension code, which is
+            // written straight to IndexedDB (outside of the export) —
+            // without it, games using custom extensions/functions would
+            // silently fail to start.
+            let additionalFiles = [];
+            try {
+              // outputDir is "<origin>/browser_sw_preview/<instanceId>/preview"
+              const instanceId = new URL(outputDir).pathname.split('/')[2];
+              if (instanceId) {
+                additionalFiles = await getAllFilesWithPrefix(
+                  `/${instanceId}/`
+                );
+                console.log(
+                  `[BrowserSWPreviewLauncher] Read ${additionalFiles.length} files (extension code, ...) from IndexedDB for the overlay.`
+                );
+              }
+            } catch (error) {
+              console.warn(
+                '[BrowserSWPreviewLauncher] Could not read the extension code files from IndexedDB — the preview may lack custom extensions:',
+                error
+              );
+            }
+
             overlaySrcDoc = buildOverlayPreviewHtml({
               files: browserSWFileSystem.getAllWrittenFiles(),
+              additionalFiles,
             });
             overlayLocation = null;
             console.log(

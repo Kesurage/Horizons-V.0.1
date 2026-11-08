@@ -128,6 +128,11 @@ jobs:
             fs.writeFileSync('capacitor.config.json', JSON.stringify(config, null, 2));
           "
           npx cap sync android
+          # Make the soft keyboard RESIZE the WebView instead of covering it,
+          # so inputs in embedded editors (Yarn dialogue editor, preview
+          # debugger, ...) stay visible while typing on Android.
+          sed -i 's|android:name=".MainActivity"|& android:windowSoftInputMode="adjustResize"|' android/app/src/main/AndroidManifest.xml
+          grep -n "windowSoftInputMode\|MainActivity" android/app/src/main/AndroidManifest.xml || true
           # Harden the Gradle wrapper for flaky networks: use the smaller
           # -bin distribution (no sources/docs) and raise the wrapper's read
           # timeout from its 10s default — services.gradle.org regularly
@@ -172,50 +177,41 @@ jobs:
       - name: Rename APK
         run: |
           mkdir -p release
-          cp capacitor-app/android/app/build/outputs/apk/release/app-release.apk release/Horizons-v0.2.5.apk
+          cp capacitor-app/android/app/build/outputs/apk/release/app-release.apk release/Horizons-v0.2.6.apk
           ls -la release/
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: horizons-apk
-          path: release/Horizons-v0.2.5.apk
+          path: release/Horizons-v0.2.6.apk
           retention-days: 30
 
       - name: Publish to GitHub Releases
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.2.5
-          name: Horizons V.0.2.5 — offline preview, visible AI team, Yarn Spinner 2 dialogues
+          tag_name: v0.2.6
+          name: Horizons V.0.2.6 — Yarn keyboard fixed, working previews, compact AI panel
           body: |
-            ## Horizons V.0.2.5 APK
+            ## Horizons V.0.2.6 APK
 
-            Install: download `Horizons-v0.2.5.apk` on your Android device and open it (allow "install from unknown sources").
+            Install: download `Horizons-v0.2.6.apk` on your Android device and open it (allow "install from unknown sources").
 
-            ### Preview now works — fully offline, inside the app
+            ### The Yarn dialogue editor keyboard now works
 
-            The preview was fundamentally broken in the app shell (it tried to open a popup browser window — impossible on Android WebView — and needed GDevelop's CDN + Google's CDN even to start). It is now:
+            Tapping the Yarn editor on Android did nothing — two root causes, both fixed:
 
-            - shown in a **full-screen in-app preview** (with refresh & close) instead of a popup;
-            - built from the game files directly (blob URLs) — **it does not even need the service worker**;
-            - running the **game engine bundled inside the APK** (`/Runtime`), so it works with zero network;
-            - the service worker (used by the web version) now ships its workbox runtime locally — no Google CDN anymore.
+            - a dialog was **stealing the focus** from the embedded editor every time you tapped inside it, which prevented the Android keyboard from attaching. Focus traps are now disabled in the app shell, and the screen **resizes when the keyboard opens** (inputs stay visible instead of being covered);
+            - the bridge between the app and the editor used `window.opener`, which is null for an embedded editor — so the editor never received your dialogue file and could not send back its changes. It now uses the correct channel: **loading your file, editing it, and Apply/save works end-to-end**.
 
-            ### See your AI team work — and talk to each other
+            ### Previews start now (black screen fixed)
 
-            - A persistent **AI Team panel** sits at the top of the chat: one live card per provider (GLM = Builder, Gemini = Researcher) showing its model, status (ready / working / cooling down / no key) and recent activity.
-            - The **Team channel** below the cards shows the messages the AIs exchange while they work: "Gemini starts researching in parallel…", "Gemini → builder: research notes delivered", retries, queueing…
-            - Every answer is now signed with a **"via GLM 4.7 Flash · glm-4.7-flash"** badge — you always know who answered.
-            - AI networking: the WebView's own network stack is used again (both Z.ai and Google AI Studio allow it — verified), which is what makes local preview files reachable; requests that fail at the network level are still retried once through the native stack (CORS-free).
+            The preview overlay was built, but the game data was still referenced through service-worker-only URLs — which don't exist in the app shell → black screen. The preview page now rewrites **all** game data, events code and extensions code to in-memory blob URLs, so the preview is truly self-contained (engine from the APK, data from memory — zero network, no service worker).
 
-            ### Yarn dialogues: Yarn Spinner 2 JSON now works
+            ### Simpler AI panel
 
-            The built-in Dialogue Tree (Yarn) extension now **auto-detects both Yarn JSON formats**: the classic one and the **Yarn Spinner 2.x JSON export** (from the modern Yarn Spinner editor) — converted automatically on load. "Load dialogue tree from a JSON file / scene variable" accepts either.
-
-            ### JavaScript code events: AI knows them
-
-            - The AI can now generate **JavaScript code events** (`BuiltinCommonInstructions::JsCode`) when logic can't be expressed with standard events — with the exact serialization format documented in its guide.
-            - The AI also knows the full **Dialogue Tree action/condition/expression list** (load Yarn JSON, start branch, next line, options…) so it can build dialogue systems for you.
+            - The AI Team panel is now **collapsed by default** — the chat gets the screen back. The compact header keeps showing the live status dots (green = ready, orange = working) so you always see both AIs at a glance.
+            - Expanding it shows **only the providers you can actually use** (GLM + Gemini once keys are set); the disabled ones no longer clutter the list.
 
             ### Setup (BYOK — bring your own keys)
 
@@ -224,7 +220,7 @@ jobs:
             3. Press **Test**. If Z.ai's free servers are momentarily busy, you'll see the automatic retry instead of an error.
           draft: false
           prerelease: false
-          files: release/Horizons-v0.2.5.apk
+          files: release/Horizons-v0.2.6.apk
           fail_on_unmatched_files: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

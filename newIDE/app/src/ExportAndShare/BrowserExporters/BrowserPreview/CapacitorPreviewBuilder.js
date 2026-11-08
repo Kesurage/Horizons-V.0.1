@@ -22,10 +22,20 @@ export type WrittenPreviewFile = {|
 const isAbsoluteUrl = (url: string): boolean =>
   /^(https?:|data:|blob:|\/\/)/i.test(url);
 
+// Path prefix used by the service-worker based preview storage.
+const SW_PREVIEW_PATH_PREFIX = '/browser_sw_preview/';
+
+const normalizePath = (path: string): string => path.replace(/^\/+/, '');
+
 export const buildOverlayPreviewHtml = ({
   files,
+  additionalFiles,
 }: {
   files: Array<WrittenPreviewFile>,
+  // Files that were written straight to IndexedDB outside of the export
+  // (events-functions extension code) — read back so the overlay can
+  // reference them too.
+  additionalFiles?: Array<WrittenPreviewFile>,
 }): string => {
   const indexFile =
     files.find(file => file.path === 'preview/index.html') ||
@@ -38,37 +48,82 @@ export const buildOverlayPreviewHtml = ({
     throw new Error('No index.html found in the exported preview files.');
   }
 
-  // Create a blob URL for every generated file, keyed by its basename
-  // (the generated index.html references them as bare filenames).
+  // Create a blob URL for every file, keyed by its full path (relative to
+  // the preview instance root, e.g. "1/preview/data.js") AND by its
+  // basename. The generated index.html references the game data and events
+  // code with ABSOLUTE same-origin urls
+  // ("https://localhost/browser_sw_preview/1/preview/data.js") and the
+  // engine runtime with absolute "/Runtime/..." urls — so absolute
+  // browser_sw_preview urls must be rewritten to blobs, or the preview
+  // would depend on the service worker (a 404 in the app shell = black
+  // screen). Runtime urls are left untouched: the app shell serves them.
+  // Files written during this export ("files") win over files read back
+  // from IndexedDB ("additionalFiles").
+  const blobUrlsByPath = new Map<string, string>();
   const blobUrlsByName = new Map<string, string>();
-  files.forEach(file => {
+  [...files, ...(additionalFiles || [])].forEach(file => {
     if (file === indexFile) return;
-    const basename = file.path.split('/').pop();
-    if (!basename || blobUrlsByName.has(basename)) return;
+    const normalizedPath = normalizePath(file.path);
+    if (blobUrlsByPath.has(normalizedPath)) return;
     try {
-      blobUrlsByName.set(
-        basename,
-        URL.createObjectURL(
-          new Blob([file.content], { type: file.contentType })
-        )
+      const blobUrl = URL.createObjectURL(
+        new Blob([file.content], { type: file.contentType })
       );
+      blobUrlsByPath.set(normalizedPath, blobUrl);
+      const basename = file.path.split('/').pop();
+      if (basename && !blobUrlsByName.has(basename)) {
+        blobUrlsByName.set(basename, blobUrl);
+      }
     } catch (error) {
       console.warn(
-        '[CapacitorPreviewBuilder] Could not create blob URL for',
+        '[CapacitorPreviewBuilder] Could not create a blob URL for',
         file.path,
         error
       );
     }
   });
 
-  // Rewrite relative src/href attributes to the blob URLs.
+  // Resolve a url used by the generated index.html to a blob URL (or null).
+  const resolveToBlobUrl = (rawUrl: string): ?string => {
+    if (rawUrl.startsWith('#') || rawUrl.startsWith('data:')) return null;
+    if (/^https?:/i.test(rawUrl)) {
+      // Absolute url: rewrite only same-origin service-worker preview files.
+      try {
+        const parsedUrl = new URL(rawUrl, window.location.origin);
+        if (
+          parsedUrl.origin !== window.location.origin ||
+          !parsedUrl.pathname.startsWith(SW_PREVIEW_PATH_PREFIX)
+        ) {
+          return null;
+        }
+        const relativePath = decodeURIComponent(
+          parsedUrl.pathname.slice(SW_PREVIEW_PATH_PREFIX.length)
+        );
+        return blobUrlsByPath.get(relativePath) || null;
+      } catch (error) {
+        return null;
+      }
+    }
+    if (rawUrl.startsWith('//')) return null;
+
+    // Relative url: match by full path then by basename.
+    const pathPart = rawUrl.split('?')[0].split('#')[0];
+    const relativePath = normalizePath(pathPart);
+    return (
+      blobUrlsByPath.get(relativePath) ||
+      blobUrlsByName.get(pathPart.split('/').pop() || '') ||
+      null
+    );
+  };
+
+  // Rewrite relative AND absolute service-worker preview src/href attributes
+  // to the blob URLs.
   let html = indexFile.content;
   html = html.replace(
     /(src|href)="([^"]+)"/g,
     (match: string, attribute: string, url: string) => {
-      if (isAbsoluteUrl(url) || url.startsWith('#')) return match;
-      const basename = url.split('?')[0].split('#')[0].split('/').pop();
-      const blobUrl = basename ? blobUrlsByName.get(basename) : null;
+      if (isAbsoluteUrl(url) && url.startsWith('blob:')) return match;
+      const blobUrl = resolveToBlobUrl(url);
       return blobUrl ? `${attribute}="${blobUrl}"` : match;
     }
   );

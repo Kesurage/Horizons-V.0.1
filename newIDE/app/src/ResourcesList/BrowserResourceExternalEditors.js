@@ -26,6 +26,27 @@ import { UserCancellationError } from '../LoginProvider/Utils';
 import { triggerOnResourceExternallyChanged } from '../MainFrame/ResourcesWatcher';
 let nextExternalEditorWindowId = 0;
 
+// Cleanup function of the external editor overlay opened in the app shell
+// (only one external editor session can be open at a time in Capacitor).
+let closeInAppExternalEditorOverlay: ?() => void = null;
+
+/**
+ * Close the window of an external editor — either a real popup window
+ * (browser) or the in-app overlay (app shell/Capacitor), where
+ * `window.close()` is a no-op on the iframe.
+ */
+const closeExternalEditorWindow = (externalEditorWindow: any) => {
+  if (closeInAppExternalEditorOverlay) {
+    const closeOverlay = closeInAppExternalEditorOverlay;
+    closeInAppExternalEditorOverlay = null;
+    closeOverlay();
+  } else {
+    try {
+      externalEditorWindow.close();
+    } catch (ignored) {}
+  }
+};
+
 /**
  * Horizons: in the app shell (Capacitor WebView), window.open can't show a
  * window — open the external editor (Piskel, Jfxr, Yarn) in a full-screen,
@@ -65,19 +86,33 @@ const openInAppExternalEditorOverlay = (editorTitle: string): WindowProxy => {
     if (container.parentNode) {
       container.parentNode.removeChild(container);
     }
+    if (closeInAppExternalEditorOverlay === closeOverlay) {
+      closeInAppExternalEditorOverlay = null;
+    }
   };
 
   // Navigating the iframe away fires its `unload` event, which the editor
   // bridge listens to in order to finish the editing session.
-  closeButton.onclick = () => {
+  const closeOverlay = () => {
     try {
       iframe.contentWindow.location.href = 'about:blank';
     } catch (ignored) {}
     setTimeout(removeOverlay, 100);
   };
+  closeButton.onclick = closeOverlay;
+  closeInAppExternalEditorOverlay = closeOverlay;
+
+  // Give the focus to the embedded editor as soon as it loads, so that taps
+  // inside it attach the Android soft keyboard to the iframe inputs.
+  iframe.addEventListener('load', () => {
+    try {
+      if (iframe.contentWindow) iframe.contentWindow.focus();
+    } catch (ignored) {}
+  });
 
   const contentWindow = iframe.contentWindow;
   if (!contentWindow) {
+    removeOverlay();
     throw new Error(
       "Can't open the external editor because of browser restrictions."
     );
@@ -151,7 +186,7 @@ const openAndWaitForExternalEditorWindow = async ({
         // $FlowFixMe[incompatible-type] - assuming the typing is good.
         externalEditorOutput = payload;
       } else if (event.data.id === 'close') {
-        externalEditorWindow.close();
+        closeExternalEditorWindow(externalEditorWindow);
         onExternalEditorWindowClosed();
       }
     };
@@ -171,7 +206,7 @@ const openAndWaitForExternalEditorWindow = async ({
     signal.addEventListener('abort', () => {
       reject(new UserCancellationError(''));
       if (externalEditorClosed) return;
-      externalEditorWindow.close();
+      closeExternalEditorWindow(externalEditorWindow);
       onExternalEditorWindowClosed();
     });
 
@@ -201,7 +236,7 @@ const openAndWaitForExternalEditorWindow = async ({
       );
 
       // The external editor is not loaded after 10 seconds, abort.
-      externalEditorWindow.close();
+      closeExternalEditorWindow(externalEditorWindow);
       onExternalEditorWindowClosed();
     }, 10000);
   });

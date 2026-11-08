@@ -174,11 +174,14 @@ const ProviderCard = ({ summary, health, working }: ProviderCardProps) => {
 };
 
 const AiTeamPanel = (): React.Node => {
+  // Collapsed by default: on mobile, the chat (not the monitoring panel) is
+  // what users want to see. The compact header always shows the status dots
+  // so "is the other AI working?" stays answerable at a glance.
   const [expanded, setExpanded] = React.useState(() => {
     try {
-      return window.localStorage.getItem('gd-ai-team-panel-expanded') !== '0';
+      return window.localStorage.getItem('gd-ai-team-panel-expanded') === '1';
     } catch (ignored) {
-      return true;
+      return false;
     }
   });
   const [team, setTeam] = React.useState<Array<TeamSummaryEntry>>([]);
@@ -249,6 +252,16 @@ const AiTeamPanel = (): React.Node => {
   const healthBySlotId = new Map<string, SlotHealth>();
   healths.forEach(health => healthBySlotId.set(health.slotId, health));
 
+  // Only providers that can actually be used get a card — disabled ones
+  // (no API key / not enabled) would just clutter the panel, especially on
+  // a phone screen.
+  const activeEntries = team.filter(entry => {
+    const health = healthBySlotId.get(entry.slotId);
+    if (health) return health.enabled && health.hasKey;
+    return entry.ready;
+  });
+  const disabledCount = team.length - activeEntries.length;
+
   const lastEvent = feed.length ? feed[feed.length - 1] : null;
   const lastEventIsError = lastEvent && lastEvent.kind === 'team-exhausted';
 
@@ -277,7 +290,7 @@ const AiTeamPanel = (): React.Node => {
         >
           <Trans>AI Team</Trans>
         </span>
-        {team.slice(0, 4).map(entry => {
+        {activeEntries.slice(0, 4).map(entry => {
           const health = healthBySlotId.get(entry.slotId);
           const working = isSlotWorking(entry.slotId);
           let color = '#4caf50';
@@ -322,11 +335,11 @@ const AiTeamPanel = (): React.Node => {
         </span>
       </div>
 
-      {/* Expanded: provider cards + the team channel. */}
+      {/* Expanded: provider cards for the ACTIVE providers + the team channel. */}
       {expanded && (
         <div style={{ padding: '0 10px 8px' }}>
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-            {team.map(entry => (
+            {activeEntries.map(entry => (
               <ProviderCard
                 key={entry.slotId}
                 summary={entry}
@@ -335,6 +348,20 @@ const AiTeamPanel = (): React.Node => {
               />
             ))}
           </div>
+          {disabledCount > 0 && (
+            <div
+              style={{
+                marginTop: 6,
+                fontSize: 10,
+                color: 'rgba(255,255,255,0.38)',
+              }}
+            >
+              <Trans>
+                {disabledCount} more providers are disabled (no API key) — add
+                keys in Preferences → AI Provider to grow the team.
+              </Trans>
+            </div>
+          )}
           <div
             style={{
               display: 'flex',

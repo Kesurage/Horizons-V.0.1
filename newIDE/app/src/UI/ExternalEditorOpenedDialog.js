@@ -3,6 +3,7 @@ import optionalRequire from '../Utils/OptionalRequire';
 import Dialog from './Dialog';
 import Text from './Text';
 import FlatButton from './FlatButton';
+import { isRunningInCapacitor } from '../Utils/Platform';
 
 const electron = optionalRequire('electron');
 
@@ -12,6 +13,12 @@ export const ExternalEditorOpenedDialog = ({
   onClose?: () => Promise<void>,
 |}) => {
   if (!!electron) return null;
+
+  // In the Horizons app shell (Android APK), the external editor is shown in
+  // a full-screen in-app overlay with its own Close button — and rendering
+  // this dialog on top of it would trap the focus, preventing the Android
+  // keyboard from working in the embedded editor (Yarn, Piskel, ...).
+  if (isRunningInCapacitor()) return null;
 
   return (
     <Dialog
