@@ -35,7 +35,17 @@ jobs:
       - name: Install editor dependencies
         working-directory: newIDE/app
         run: |
-          npm ci || npm install
+          # The external editors (piskel/jfxr/yarn) are committed to the repo,
+          # so no GitHub release download is needed for them. Retry the full
+          # install anyway: transient 5xx from npm or the libGD.js S3 bucket
+          # must not kill the build.
+          for attempt in 1 2 3 4; do
+            if npm ci; then exit 0; fi
+            echo "::warning::npm ci failed (attempt $attempt/4) — waiting 45s before retrying"
+            sleep 45
+          done
+          echo '::error::npm ci failed after 4 attempts — falling back to npm install'
+          npm install
         env:
           ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
