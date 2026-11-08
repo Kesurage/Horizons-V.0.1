@@ -123,6 +123,14 @@ jobs:
             fs.writeFileSync('capacitor.config.json', JSON.stringify(config, null, 2));
           "
           npx cap sync android
+          # Harden the Gradle wrapper for flaky networks: use the smaller
+          # -bin distribution (no sources/docs) and raise the wrapper's read
+          # timeout from its 10s default — services.gradle.org regularly
+          # exceeds it and kills the build with "Downloading ... failed:
+          # timeout (10000ms)".
+          sed -i 's|-all\.zip|-bin.zip|' android/gradle/wrapper/gradle-wrapper.properties
+          echo 'networkTimeout=180000' >> android/gradle/wrapper/gradle-wrapper.properties
+          cat android/gradle/wrapper/gradle-wrapper.properties
 
       - name: Generate signing keystore
         working-directory: capacitor-app/android
@@ -138,12 +146,23 @@ jobs:
         working-directory: capacitor-app/android
         run: |
           chmod +x gradlew
-          ./gradlew assembleRelease \
-            -Pandroid.injected.signing.store.file=$PWD/horizons-release.keystore \
-            -Pandroid.injected.signing.store.password=horizons2026 \
-            -Pandroid.injected.signing.key.alias=horizons \
-            -Pandroid.injected.signing.key.password=horizons2026 \
-            --no-daemon --stacktrace
+          # The first attempt downloads the Gradle distribution and all
+          # Maven/AGP dependencies — retry so transient timeouts don't kill
+          # the build.
+          for attempt in 1 2 3; do
+            if ./gradlew assembleRelease \
+              -Pandroid.injected.signing.store.file=$PWD/horizons-release.keystore \
+              -Pandroid.injected.signing.store.password=horizons2026 \
+              -Pandroid.injected.signing.key.alias=horizons \
+              -Pandroid.injected.signing.key.password=horizons2026 \
+              --no-daemon --stacktrace; then
+              exit 0
+            fi
+            echo "::warning::gradlew failed (attempt $attempt/3) — waiting 60s before retrying"
+            sleep 60
+          done
+          echo '::error::gradle assembleRelease failed after 3 attempts'
+          exit 1
 
       - name: Rename APK
         run: |
