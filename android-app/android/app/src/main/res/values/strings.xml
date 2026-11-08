@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Horizons</string>
+    <string name="title_activity_main">Horizons</string>
+    <string name="package_name">app.horizons.editor</string>
+    <string name="custom_url_scheme">app.horizons.editor</string>
+</resources>

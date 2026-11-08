@@ -9,6 +9,7 @@ import {
   webSearch,
   getProviderSlots,
 } from './MultiAiOrchestrator';
+import { DEFAULT_AI_SYSTEM_PROMPT } from './UniversalAiClient';
 
 export type UniversalAiConfig = {
   baseUrl: string,
@@ -221,7 +222,7 @@ export const UNIVERSAL_AI_TOOLS = [
     function: {
       name: 'create_or_replace_object',
       description:
-        'Create a new object in a scene (or the object in the scene objects list), or replace an existing one. Provide the full object configuration as JSON (GDevelop serialized object: name, type like "Sprite" and its content).',
+        'Create a new object in a scene (or replace an existing one), choosing it from the public asset library or creating it from scratch. Provide either an object_type (e.g. "Sprite", "TextObject::Text", "TiledSpriteObject::TiledSprite", "PanelSpriteObject::PanelSprite") to create from scratch, or search_terms/description to find an asset from the library, or an asset_id.',
       parameters: {
         type: 'object',
         properties: {
@@ -230,19 +231,45 @@ export const UNIVERSAL_AI_TOOLS = [
             type: 'string',
             description: 'Name of the object to create or replace.',
           },
-          object_configuration_json: {
+          object_type: {
             type: 'string',
             description:
-              'Optional JSON configuration of the object (GDevelop serialized format). If omitted, a default object of the requested type is created.',
+              'Optional object type to create the object from scratch. Use "Sprite" for ordinary image-based objects, "TextObject::Text" for texts, "TiledSpriteObject::TiledSprite", "PanelSpriteObject::PanelSprite", "ParticleSystem::ParticleEmitter", "Cube3DObject", "Model3DObject", etc.',
           },
           asset_id: {
             type: 'string',
             description:
-              'Optional asset store id to install the object from the asset store.',
+              'Optional asset store id to install the object from the asset library.',
+          },
+          search_terms: {
+            type: 'string',
+            description:
+              'Optional short keywords to search the asset library (e.g. "space ship pixel").',
+          },
+          description: {
+            type: 'string',
+            description:
+              'Optional description of the wanted asset (e.g. "a pixel-art knight character walking").',
           },
           replace_existing_object: {
             type: 'boolean',
-            description: 'Replace the object if it already exists.',
+            description:
+              'Replace the object if it already exists (requires search_terms, description or asset_id).',
+          },
+          duplicated_object_name: {
+            type: 'string',
+            description:
+              'Instead of searching an asset, duplicate this existing object.',
+          },
+          duplicated_object_scene: {
+            type: 'string',
+            description:
+              'Scene of the object to duplicate (if not scene_name).',
+          },
+          target_object_scope: {
+            type: 'string',
+            description:
+              'Where to create the object: "scene" (default) or "global" (shared across scenes).',
           },
           placement_hint: {
             type: 'string',
@@ -275,7 +302,7 @@ export const UNIVERSAL_AI_TOOLS = [
     function: {
       name: 'change_object_property',
       description:
-        'Change one or more properties of an object (e.g. width, height, text for a Text object...).',
+        'Change one or more properties of an object (e.g. width, height, the text of a Text object...). changed_properties is a list of { property_name, value } entries.',
       parameters: {
         type: 'object',
         properties: {
@@ -303,7 +330,7 @@ export const UNIVERSAL_AI_TOOLS = [
     function: {
       name: 'add_behavior',
       description:
-        'Add a behavior to an object (e.g. "PlatformerObject", "Draggable", "Physics2::Physics2Behavior", "TopDownMovement"...). The behavior type must be the full extension::Behavior type name.',
+        'Add a behavior to an object (e.g. "PlatformerObjectBehavior", "DraggableBehavior", "Physics2::Physics2Behavior", "TopDownMovementBehavior::TopDownMovementBehavior"...). The behavior type must be the full extension::Behavior type name.',
       parameters: {
         type: 'object',
         properties: {
@@ -313,6 +340,11 @@ export const UNIVERSAL_AI_TOOLS = [
             type: 'string',
             description:
               'Full behavior type, e.g. "PlatformerObjectBehavior" or "Physics2::Physics2Behavior".',
+          },
+          behavior_name: {
+            type: 'string',
+            description:
+              'Optional custom name for the behavior (defaults to the type name).',
           },
         },
         required: ['scene_name', 'object_name', 'behavior_type'],
@@ -405,21 +437,64 @@ export const UNIVERSAL_AI_TOOLS = [
     function: {
       name: 'put_2d_instances',
       description:
-        'Place or move 2D instances in a scene. Provide a JSON list of { object_name, x, y, z_order, layer, angle, ... }.',
+        'Place, move, transform or erase 2D instances in a scene (like painting with the instance brush). To simply place N copies of an object: brush_kind "point" + new_instances_count + brush_position "x,y". brush_kind can be "point", "line", "grid", "random_in_circle" or "erase". To move existing instances, pass their ids in existing_instance_ids and brush_position.',
       parameters: {
         type: 'object',
         properties: {
           scene_name: { type: 'string' },
-          layer_name: { type: 'string' },
+          object_name: {
+            type: 'string',
+            description: 'Object to place (required to place new instances).',
+          },
+          layer_name: {
+            type: 'string',
+            description: 'Layer name (e.g. "base" or "UI").',
+          },
           brush_kind: {
             type: 'string',
-            description: 'How to paint/place instances (e.g. "single").',
+            description:
+              'One of: "point" (place at a position), "line" (between two positions), "grid" (rows x columns), "random_in_circle", "erase" (delete instances).',
           },
-          instances_json: {
+          brush_position: {
+            type: 'string',
+            description: 'Position as "x,y" (in pixels).',
+          },
+          brush_end_position: {
+            type: 'string',
+            description: 'End position as "x,y" for line/grid brushes.',
+          },
+          brush_size: {
+            type: 'number',
+            description: 'Size of the brush area (for grid/random_in_circle).',
+          },
+          row_count: {
+            type: 'number',
+            description: 'Rows for the grid brush.',
+          },
+          column_count: {
+            type: 'number',
+            description: 'Columns for the grid brush.',
+          },
+          new_instances_count: {
+            type: 'number',
+            description:
+              'Number of instances to place (default 1 when placing).',
+          },
+          existing_instance_ids: {
             type: 'string',
             description:
-              'JSON array of instances to place with their properties.',
+              'Comma-separated ids of existing instances to move/erase.',
           },
+          instances_z_order: { type: 'number' },
+          instances_rotation: {
+            type: 'number',
+            description: 'Angle in degrees.',
+          },
+          instances_size: {
+            type: 'string',
+            description: 'Size as "width,height" (empty to keep custom size).',
+          },
+          instances_opacity: { type: 'number', description: 'Opacity 0-255.' },
         },
         required: ['scene_name', 'layer_name', 'brush_kind'],
       },
@@ -430,14 +505,31 @@ export const UNIVERSAL_AI_TOOLS = [
     function: {
       name: 'put_3d_instances',
       description:
-        'Place or move 3D instances in a scene. Provide a JSON list of { object_name, x, y, z, ... }.',
+        'Place, move, transform or erase 3D instances in a scene (like painting with the 3D instance brush). brush_kind can be "point", "grid" or "erase".',
       parameters: {
         type: 'object',
         properties: {
           scene_name: { type: 'string' },
+          object_name: { type: 'string' },
           layer_name: { type: 'string' },
-          brush_kind: { type: 'string' },
-          instances_json: { type: 'string' },
+          brush_kind: {
+            type: 'string',
+            description: '"point", "grid" or "erase".',
+          },
+          brush_position: {
+            type: 'string',
+            description: 'Position as "x,y,z".',
+          },
+          brush_end_position: { type: 'string' },
+          brush_size: { type: 'number' },
+          row_count: { type: 'number' },
+          column_count: { type: 'number' },
+          new_instances_count: { type: 'number' },
+          existing_instance_ids: { type: 'string' },
+          instances_z_order: { type: 'number' },
+          instances_rotation: { type: 'string' },
+          instances_size: { type: 'string' },
+          instances_opacity: { type: 'number' },
         },
         required: ['scene_name', 'layer_name', 'brush_kind'],
       },
@@ -506,6 +598,11 @@ export const UNIVERSAL_AI_TOOLS = [
         properties: {
           scene_name: { type: 'string' },
           include_ui_layer: { type: 'boolean' },
+          background_color: {
+            type: 'string',
+            description:
+              'Optional background color as R;G;B (e.g. "25;26;27").',
+          },
         },
         required: ['scene_name'],
       },
@@ -574,13 +671,26 @@ export const UNIVERSAL_AI_TOOLS = [
     function: {
       name: 'add_or_edit_variable',
       description:
-        'Create or edit a variable (global, scene or object scope). Use variable_type: number, string or boolean. Structure allows children variables.',
+        'Create or edit a variable (global, scene or object scope). Use variable_scope: "global", "scene" or "object". variable_name_or_path supports child variables with dots (e.g. "player.stats.hp").',
       parameters: {
         type: 'object',
         properties: {
           variable_scope: {
             type: 'string',
             description: '"global", "scene" or "object".',
+          },
+          variable_name_or_path: {
+            type: 'string',
+            description:
+              'Name of the variable, or a path with dots for children (e.g. "score" or "player.stats.hp").',
+          },
+          value: {
+            type: 'string',
+            description: 'The value of the variable, as a string.',
+          },
+          variable_type: {
+            type: 'string',
+            description: '"number", "string" or "boolean".',
           },
           scene_name: {
             type: 'string',
@@ -590,17 +700,8 @@ export const UNIVERSAL_AI_TOOLS = [
             type: 'string',
             description: 'Required for object scope.',
           },
-          variable_name: { type: 'string' },
-          value: {
-            type: 'string',
-            description: 'The value of the variable, as a string.',
-          },
-          variable_type: {
-            type: 'string',
-            description: '"number", "string" or "boolean".',
-          },
         },
-        required: ['variable_scope', 'value'],
+        required: ['variable_scope', 'variable_name_or_path', 'value'],
       },
     },
   },
@@ -642,11 +743,15 @@ export const UNIVERSAL_AI_TOOLS = [
     function: {
       name: 'read_full_docs',
       description:
-        'Read the full documentation about a GDevelop feature or extension when unsure how to use it.',
+        'Read the full documentation about GDevelop extensions/features when unsure how to use them.',
       parameters: {
         type: 'object',
         properties: {
-          docs_name: { type: 'string' },
+          extension_names: {
+            type: 'string',
+            description:
+              'Comma-separated names of the extensions to read about.',
+          },
         },
         required: [],
       },

@@ -52,6 +52,11 @@ export type AiProviderSlot = {
   capabilities: Array<AiProviderCapability>,
   /** True for local endpoints (no API key needed). */
   keyless: boolean,
+  /**
+   * Ask reasoning-capable GLM models to skip their "thinking" phase
+   * (much faster and cheaper on the free tier — recommended for agent loops).
+   */
+  disableThinking?: boolean,
 };
 
 export type AiStatusEvent = {
@@ -92,6 +97,7 @@ export const DEFAULT_PROVIDER_SLOTS: Array<AiProviderSlot> = [
     role: 'primary',
     capabilities: ['text'],
     keyless: false,
+    disableThinking: true, // keep free-tier latency sane in agent loops
   },
   {
     id: 'gemini-specialist',
@@ -102,7 +108,13 @@ export const DEFAULT_PROVIDER_SLOTS: Array<AiProviderSlot> = [
     rpmLimit: 15, // Google free tier
     enabled: true,
     role: 'specialist',
-    capabilities: ['text', 'vision', 'image-generation', 'video-analysis', 'web-search'],
+    capabilities: [
+      'text',
+      'vision',
+      'image-generation',
+      'video-analysis',
+      'web-search',
+    ],
     keyless: false,
   },
   {
@@ -348,7 +360,10 @@ const getRuntime = (slotId: string): SlotRuntime => {
   return runtimes[slotId];
 };
 
-const msUntilSlotFree = (slot: AiProviderSlot, runtime: SlotRuntime): number => {
+const msUntilSlotFree = (
+  slot: AiProviderSlot,
+  runtime: SlotRuntime
+): number => {
   const now = Date.now();
   if (now < runtime.cooldownUntil) {
     return runtime.cooldownUntil - now;
@@ -370,7 +385,9 @@ const cooldownSlot = (slot: AiProviderSlot, ms: number, reason: string) => {
     kind: 'provider-cooldown',
     slotId: slot.id,
     label: slot.label,
-    message: `${reason} — cooling down ${(ms / 1000).toFixed(0)}s before reuse.`,
+    message: `${reason} — cooling down ${(ms / 1000).toFixed(
+      0
+    )}s before reuse.`,
     timestamp: Date.now(),
   });
 };
@@ -445,7 +462,8 @@ const markSlotResult = (slot: AiProviderSlot, success: boolean) => {
 // ---------------------------------------------------------------------------
 
 const isSlotUsable = (slot: AiProviderSlot): boolean =>
-  slot.enabled && (slot.keyless || (slot.apiKey && slot.apiKey.trim().length > 0));
+  slot.enabled &&
+  (slot.keyless || (slot.apiKey && slot.apiKey.trim().length > 0));
 
 const buildChain = (
   slots: Array<AiProviderSlot>,
@@ -506,12 +524,21 @@ const callSlotChatCompletions = async ({
     const payload: { [string]: any } = {
       model: slot.model,
       messages,
-      temperature:
-        typeof temperature === 'number' ? temperature : 0.7,
+      temperature: typeof temperature === 'number' ? temperature : 0.7,
     };
     if (tools && tools.length > 0) {
       payload.tools = tools;
       payload.tool_choice = 'auto';
+    }
+    if (
+      slot.disableThinking &&
+      /glm-[456]|zai|z\.ai|bigmodel/i.test(
+        `${slot.model} ${sanitizeBaseUrl(slot.baseUrl)}`
+      )
+    ) {
+      // Zhipu/Z.ai reasoning models accept this OpenAI-style extension to
+      // skip the thinking phase (ignored by non-GLM providers).
+      payload.thinking = { type: 'disabled' };
     }
 
     // Transient errors (rate limits, 5xx, timeouts, network blips) are
@@ -558,7 +585,9 @@ const callSlotChatCompletions = async ({
           kind: 'request-retry',
           slotId: slot.id,
           label: slot.label,
-          message: `${slot.label} had a transient error (attempt ${attempt}/${maxAttempts}) — retrying in ${Math.round(
+          message: `${
+            slot.label
+          } had a transient error (attempt ${attempt}/${maxAttempts}) — retrying in ${Math.round(
             backoffMs / 1000
           )}s.`,
           timestamp: Date.now(),
@@ -733,9 +762,9 @@ export const askSpecialist = async ({
       'The specialist returned an empty answer.';
     return `[SPECIALIST ANSWER — via ${result.providerLabel}]\n${text}`;
   } catch (error) {
-    return `[SPECIALIST UNAVAILABLE] The specialist AI could not be reached: ${
-      (error && error.message) || 'unknown error'
-    }. Continue with your own knowledge and tell the user the specialist was unavailable.`;
+    return `[SPECIALIST UNAVAILABLE] The specialist AI could not be reached: ${(error &&
+      error.message) ||
+      'unknown error'}. Continue with your own knowledge and tell the user the specialist was unavailable.`;
   }
 };
 
@@ -776,7 +805,11 @@ export const webSearch = async (query: string): Promise<string> => {
         contents: [
           {
             role: 'user',
-            parts: [{ text: `Search the web and answer concisely with sources:\n${query}` }],
+            parts: [
+              {
+                text: `Search the web and answer concisely with sources:\n${query}`,
+              },
+            ],
           },
         ],
         tools: [{ google_search: {} }],
@@ -788,7 +821,10 @@ export const webSearch = async (query: string): Promise<string> => {
       response.data && response.data.candidates && response.data.candidates[0];
     const parts = candidate && candidate.content && candidate.content.parts;
     const answer = parts
-      ? parts.map(part => part.text || '').filter(Boolean).join('\n')
+      ? parts
+          .map(part => part.text || '')
+          .filter(Boolean)
+          .join('\n')
       : '';
     const grounding =
       candidate && candidate.groundingMetadata
@@ -796,25 +832,31 @@ export const webSearch = async (query: string): Promise<string> => {
         : null;
     const sources = grounding
       ? grounding
-          .map(chunk => chunk.web && chunk.web.title ? `- ${chunk.web.title}${chunk.web.uri ? ` (${chunk.web.uri})` : ''}` : null)
+          .map(chunk =>
+            chunk.web && chunk.web.title
+              ? `- ${chunk.web.title}${
+                  chunk.web.uri ? ` (${chunk.web.uri})` : ''
+                }`
+              : null
+          )
           .filter(Boolean)
           .slice(0, 8)
           .join('\n')
       : '';
-    return `[WEB SEARCH RESULTS — via ${geminiSlot.label}]\n${answer || 'No answer returned.'}${
-      sources ? `\n\nSources:\n${sources}` : ''
-    }`;
+    return `[WEB SEARCH RESULTS — via ${geminiSlot.label}]\n${answer ||
+      'No answer returned.'}${sources ? `\n\nSources:\n${sources}` : ''}`;
   });
   runtime.queue = task.catch(() => {});
 
   try {
     return await task;
   } catch (error) {
-    return `[WEB SEARCH FAILED] ${
-      (error && error.response && error.response.data && JSON.stringify(error.response.data).slice(0, 300)) ||
+    return `[WEB SEARCH FAILED] ${(error &&
+      error.response &&
+      error.response.data &&
+      JSON.stringify(error.response.data).slice(0, 300)) ||
       (error && error.message) ||
-      'unknown error'
-    }. Answer from your own knowledge.`;
+      'unknown error'}. Answer from your own knowledge.`;
   }
 };
 
@@ -842,7 +884,7 @@ export const getTeamSummary = (): Array<{|
 export const countReadySlots = (): number =>
   getProviderSlots().filter(isSlotUsable).length;
 
-export type SlotHealth = {| 
+export type SlotHealth = {|
   slotId: string,
   ready: boolean,
   enabled: boolean,

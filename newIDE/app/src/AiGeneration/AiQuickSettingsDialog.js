@@ -17,7 +17,12 @@ import {
   fetchAvailableModels,
 } from './UniversalAiClient';
 import MultiAiTeamDialog from './MultiAiTeamDialog';
-import { countReadySlots } from './MultiAiOrchestrator';
+import {
+  countReadySlots,
+  getProviderSlots,
+  saveProviderSlots,
+} from './MultiAiOrchestrator';
+import { sanitizeBaseUrl } from './UniversalAiClient';
 import CheckCircleIcon from '../UI/CustomSvgIcons/CheckCircle';
 import RefreshIcon from '../UI/CustomSvgIcons/Refresh';
 
@@ -43,11 +48,66 @@ export const AiQuickSettingsDialog = ({ open, onClose }: Props): React.Node => {
     []
   );
 
-  React.useEffect(() => {
-    if (open) setTeamReadyCount(countReadySlots());
-  }, [open]);
+  React.useEffect(
+    () => {
+      if (open) setTeamReadyCount(countReadySlots());
+    },
+    [open]
+  );
 
   if (!open) return null;
+
+  /**
+   * Keep the Multi-AI team slots in sync with the single-provider fields of
+   * this dialog: the orchestrator only reads the team slots, so a key typed
+   * here must be pushed to the matching slot (or a new custom slot) —
+   * otherwise the request would fail with "No AI provider is ready".
+   */
+  const syncConfigToTeamSlots = (
+    rawBaseUrl: string,
+    apiKey: string,
+    model: string
+  ) => {
+    try {
+      const baseUrl = sanitizeBaseUrl(rawBaseUrl || '');
+      if (!baseUrl) return;
+      const slots = getProviderSlots();
+      const matchingIndex = slots.findIndex(
+        slot =>
+          sanitizeBaseUrl(slot.baseUrl).toLowerCase() === baseUrl.toLowerCase()
+      );
+      if (matchingIndex >= 0) {
+        const updated = slots.map((slot, index) =>
+          index === matchingIndex
+            ? {
+                ...slot,
+                apiKey: apiKey || slot.apiKey,
+                model: model || slot.model,
+                enabled: apiKey || slot.keyless ? true : slot.enabled,
+              }
+            : slot
+        );
+        saveProviderSlots(updated);
+      } else if (apiKey) {
+        slots.push({
+          id: 'custom-quick-' + Date.now().toString(36),
+          label: `Custom (${model || 'model'})`,
+          baseUrl,
+          apiKey,
+          model: model || 'gpt-4o',
+          rpmLimit: 0,
+          enabled: true,
+          role: 'fallback',
+          capabilities: ['text'],
+          keyless: false,
+        });
+        saveProviderSlots(slots);
+      }
+      setTeamReadyCount(countReadySlots());
+    } catch (ignored) {
+      // Never break typing because of a storage issue.
+    }
+  };
 
   const handleApplyPreset = (presetKey: string) => {
     const preset = AI_PRESETS[presetKey];
@@ -55,6 +115,7 @@ export const AiQuickSettingsDialog = ({ open, onClose }: Props): React.Node => {
     preferences.setAiProviderType(presetKey);
     preferences.setAiBaseUrl(preset.baseUrl);
     preferences.setAiModel(preset.model);
+    syncConfigToTeamSlots(preset.baseUrl, values.aiApiKey || '', preset.model);
     setTestResult(null);
     setAvailableModels([]);
   };
@@ -68,6 +129,14 @@ export const AiQuickSettingsDialog = ({ open, onClose }: Props): React.Node => {
         apiKey: values.aiApiKey || '',
         model: values.aiModel || 'gpt-4o',
       });
+      // A successful test means the key works — make sure the team can use it.
+      if (res.success) {
+        syncConfigToTeamSlots(
+          values.aiBaseUrl || 'https://api.openai.com/v1',
+          values.aiApiKey || '',
+          values.aiModel || 'gpt-4o'
+        );
+      }
       setTestResult(res);
     } catch (e) {
       setTestResult({
@@ -175,8 +244,15 @@ export const AiQuickSettingsDialog = ({ open, onClose }: Props): React.Node => {
               floatingLabelText={<Trans>API Key</Trans>}
               type={showApiKey ? 'text' : 'password'}
               value={values.aiApiKey || ''}
-              onChange={(e, text) => preferences.setAiApiKey(text)}
-              helperMarkdownText={t`Stored locally in your browser.`}
+              onChange={(e, text) => {
+                preferences.setAiApiKey(text);
+                syncConfigToTeamSlots(
+                  values.aiBaseUrl || 'https://api.openai.com/v1',
+                  text,
+                  values.aiModel || 'gpt-4o'
+                );
+              }}
+              helperMarkdownText={t`Stored locally in your browser (and synced to your AI team).`}
               fullWidth
             />
           </Column>

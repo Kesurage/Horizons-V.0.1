@@ -1,5 +1,6 @@
 // This file customizes webpack configuration for react-app-rewired.
 const ModuleScopePlugin = require('react-dev-utils/ModuleScopePlugin');
+const path = require('path');
 
 module.exports = {
   webpack: function override(config, env) {
@@ -50,6 +51,21 @@ module.exports = {
         );
       }
       config.devtool = false;
+
+      // Resumable build: persist the webpack compilation cache so that an
+      // interrupted production build (e.g. CI/container timeouts) resumes
+      // from where it stopped instead of recompiling everything.
+      config.cache = {
+        type: 'filesystem',
+        cacheDirectory: path.resolve(
+          __dirname,
+          'node_modules/.cache/webpack-prod'
+        ),
+        name: 'prod-lowmem',
+      };
+      config.infrastructureLogging = {
+        level: 'error',
+      };
     }
 
     return config;

@@ -5003,9 +5003,20 @@ const createOrUpdatePlan: EditorFunction = {
     };
   },
   launchFunction: async ({ args }) => {
-    return makeGenericFailure(
-      `Unable to create or update plan - this is handled server-side.`
-    );
+    // Offline mode: there is no cloud orchestrator anymore — acknowledge the
+    // plan and echo it back so the UI (OrchestratorPlan) can display it and
+    // the agent can follow its own steps.
+    const plan = args ? args.plan : null;
+    if (!plan || !Array.isArray(plan.tasks)) {
+      return makeGenericFailure(
+        `Unable to create or update plan - the "plan" argument with a "tasks" array is required.`
+      );
+    }
+    return {
+      success: true,
+      message: 'Plan acknowledged. Follow the tasks one by one.',
+      plan,
+    };
   },
   modifiesProject: false,
 };

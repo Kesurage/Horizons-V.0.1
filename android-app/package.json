@@ -1,0 +1,15 @@
+{
+  "name": "horizons-capacitor-app",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Capacitor Android wrapper for the Horizons editor (GDevelop fork)",
+  "scripts": {
+    "cap:sync": "cap sync android",
+    "cap:open": "cap open android"
+  },
+  "dependencies": {
+    "@capacitor/android": "^8.6.0",
+    "@capacitor/cli": "^8.6.0",
+    "@capacitor/core": "^8.6.0"
+  }
+}

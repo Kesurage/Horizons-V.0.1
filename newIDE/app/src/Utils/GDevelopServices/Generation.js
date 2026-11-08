@@ -13,6 +13,7 @@ import {
   executeUniversalAiChat,
   getLocalAiHistory,
   saveLocalAiRequest,
+  describeAiError,
 } from '../../AiGeneration/UniversalAiClient';
 import {
   runUniversalAiTurn,
@@ -742,30 +743,34 @@ export const sendAiRequestFeedback = async (
     freeFormDetails?: string,
   |}
 ): Promise<AiRequest> => {
-  const authorizationHeader = await getAuthorizationHeader();
-  const response = await apiClient.post(
-    `/ai-request/${aiRequestId}/action/set-feedback`,
-    {
-      gdevelopVersionWithHash: getIDEVersionWithHash(),
-      messageIndex,
-      feedback,
-      reason,
-      freeFormDetails,
-    },
-    {
-      params: {
-        userId,
-      },
-      headers: {
-        Authorization: authorizationHeader,
-      },
-    }
-  );
-  return ensureObjectHasProperty({
-    data: response.data,
-    propertyName: 'id',
-    endpointName: '/ai-request/{id}/action/set-feedback of Generation API',
-  });
+  // Offline: feedback is acknowledged locally (stored on the local request)
+  // instead of being sent to the GDevelop cloud.
+  const localHistory = getLocalAiHistory();
+  const existingRequest = localHistory.find(r => r.id === aiRequestId);
+  if (existingRequest) {
+    const updatedRequest: AiRequest = {
+      ...existingRequest,
+      updatedAt: new Date().toISOString(),
+    };
+    try {
+      const feedbackByMessage: { [string]: mixed } = {};
+      feedbackByMessage[String(messageIndex)] = { feedback, reason };
+      // $FlowFixMe[prop-missing]
+      updatedRequest.localFeedback = feedbackByMessage;
+    } catch (ignored) {}
+    saveLocalAiRequest(updatedRequest);
+    return updatedRequest;
+  }
+  return {
+    id: aiRequestId,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    userId: userId || 'local-user',
+    status: 'ready',
+    mode: 'chat',
+    error: null,
+    output: [],
+  };
 };
 
 export const getAiRequestSuggestions = async (
@@ -1102,26 +1107,44 @@ export const forkAiRequest = async (
     upToMessageId?: string,
   |}
 ): Promise<AiRequest> => {
-  const authorizationHeader = await getAuthorizationHeader();
-  const response = await apiClient.post(
-    `/ai-request/${aiRequestId}/action/fork`,
-    {
-      upToMessageId,
-    },
-    {
-      params: {
-        userId,
-      },
-      headers: {
-        Authorization: authorizationHeader,
-      },
-    }
-  );
-  return ensureObjectHasProperty({
-    data: response.data,
-    propertyName: 'id',
-    endpointName: '/ai-request/{id}/action/fork of Generation API',
-  });
+  // Offline: fork the local request history (keep everything up to and
+  // including upToMessageId when given) under a brand new request id.
+  const localHistory = getLocalAiHistory();
+  const existingRequest = localHistory.find(r => r.id === aiRequestId);
+  if (!existingRequest) {
+    throw new Error(
+      'Cannot fork this AI request: it is not stored locally (offline mode).'
+    );
+  }
+  const output = existingRequest.output || [];
+  const forkedOutput = upToMessageId
+    ? (() => {
+        const index = output.findIndex(
+          message => message.messageId === upToMessageId
+        );
+        return index >= 0 ? output.slice(0, index + 1) : output;
+      })()
+    : output;
+  const forkedRequest: AiRequest = {
+    ...existingRequest,
+    id: 'airq_univ_' + Date.now(),
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    forkedFromAiRequestId: aiRequestId,
+    forkedAfterOriginalMessageId: upToMessageId || null,
+    output: forkedOutput.map(message => ({
+      ...message,
+      messageId: message.messageId
+        ? message.messageId +
+          '_fork_' +
+          Math.random()
+            .toString(36)
+            .slice(2, 6)
+        : undefined,
+    })),
+  };
+  saveLocalAiRequest(forkedRequest);
+  return forkedRequest;
 };
 
 export const fetchAiSettings = async ({
