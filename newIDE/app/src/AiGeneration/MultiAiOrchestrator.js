@@ -92,7 +92,7 @@ export const DEFAULT_PROVIDER_SLOTS: Array<AiProviderSlot> = [
     baseUrl: ZAI_BASE_URL,
     apiKey: '',
     model: 'glm-4.7-flash',
-    rpmLimit: 40, // user-tunable; Z.ai free tier is generous for agent tasks
+    rpmLimit: 5, // Z.ai free tier: 5 req/min, 500 req/day, ONE concurrent request
     enabled: true,
     role: 'primary',
     capabilities: ['text'],
@@ -105,7 +105,7 @@ export const DEFAULT_PROVIDER_SLOTS: Array<AiProviderSlot> = [
     baseUrl: GEMINI_OPENAI_BASE_URL,
     apiKey: '',
     model: 'gemini-flash-latest',
-    rpmLimit: 15, // Google free tier
+    rpmLimit: 10, // Google AI Studio free tier (~10 req/min for flash models)
     enabled: true,
     role: 'specialist',
     capabilities: [
@@ -192,6 +192,14 @@ export const DEFAULT_PROVIDER_SLOTS: Array<AiProviderSlot> = [
 ];
 
 const MULTI_AI_STORAGE_KEY = 'gd-multi-ai-slots-v1';
+
+// rpmLimit defaults shipped by earlier versions (far above the real free
+// tiers), replaced with corrected values when found in stored slots so
+// existing installs pick up the fix. Genuinely customised values survive.
+const LEGACY_DEFAULT_RPM_LIMITS: { [string]: number } = {
+  'glm-primary': 40,
+  'gemini-specialist': 15,
+};
 const LEGACY_PREFERENCES_KEY = 'gd-preferences';
 
 /**
@@ -300,10 +308,18 @@ export const getProviderSlots = (): Array<AiProviderSlot> => {
         parsed.forEach(slot => {
           if (slot && slot.id) storedById[slot.id] = slot;
         });
-        const merged = DEFAULT_PROVIDER_SLOTS.map(defaultSlot => ({
-          ...defaultSlot,
-          ...(storedById[defaultSlot.id] || {}),
-        }));
+        const merged = DEFAULT_PROVIDER_SLOTS.map(defaultSlot => {
+          const stored = storedById[defaultSlot.id] || {};
+          const slot = { ...defaultSlot, ...stored };
+          const legacyDefaultRpm = LEGACY_DEFAULT_RPM_LIMITS[defaultSlot.id];
+          if (
+            legacyDefaultRpm !== undefined &&
+            slot.rpmLimit === legacyDefaultRpm
+          ) {
+            slot.rpmLimit = defaultSlot.rpmLimit;
+          }
+          return slot;
+        });
         // Keep any user-created custom slots at the end.
         const defaultIds = new Set(DEFAULT_PROVIDER_SLOTS.map(s => s.id));
         parsed.forEach(slot => {
@@ -521,6 +537,20 @@ const extractRetryAfterMs = (error: any): ?number => {
   return null;
 };
 
+/**
+ * Extract the provider's own error code from the response body
+ * (Z.ai/OpenAI shape: {"error": {"code": "1302", "message": ...}}).
+ * Z.ai codes: 1302 = too many requests (RPM/concurrency), 1305 = temporary
+ * provider overload, 1113 = model not free / insufficient balance.
+ */
+const extractProviderErrorCode = (error: any): ?string => {
+  const data = error && error.response && error.response.data;
+  if (!data) return null;
+  const code = data.error ? data.error.code : data.code;
+  if (code === undefined || code === null) return null;
+  return String(code);
+};
+
 const markSlotResult = (slot: AiProviderSlot, success: boolean) => {
   const runtime = getRuntime(slot.id);
   if (success) {
@@ -639,14 +669,44 @@ const callSlotChatCompletions = async ({
         return response.data;
       } catch (error) {
         lastError = error;
+        const providerErrorCode = extractProviderErrorCode(error);
+        if (providerErrorCode === '1113') {
+          // Z.ai: the model is not free / the account balance is empty.
+          // Hammering will not help — cool the slot down for a long time and
+          // let the next team member answer.
+          cooldownSlot(
+            slot,
+            10 * 60 * 1000,
+            `${slot.label}: this model is not free on your account (code 1113) — use a free model (e.g. glm-4.7-flash) or top up the balance`
+          );
+          throw error;
+        }
         if (isRateLimitError(error)) {
-          const retryAfterMs = extractRetryAfterMs(error) || 20000;
+          // 1305 = temporary overload on the provider side: a short retry on
+          // the same provider beats failing over (the next one may be unset).
+          if (providerErrorCode === '1305' && attempt < maxAttempts) {
+            emitAiStatus({
+              kind: 'request-retry',
+              slotId: slot.id,
+              label: slot.label,
+              message: `${slot.label} is temporarily overloaded (code 1305) — retrying in 6s.`,
+              timestamp: Date.now(),
+            });
+            await sleep(6000);
+            continue;
+          }
+          // 1302 = too many requests for this account+model. The free GLM
+          // tier allows ONE request at a time and ~5 req/min — requests made
+          // from other tools/devices with the same key also count.
+          const retryAfterMs =
+            extractRetryAfterMs(error) ||
+            (providerErrorCode === '1302' ? 30000 : 20000);
           cooldownSlot(
             slot,
             Math.min(Math.max(retryAfterMs, 10000), 120000),
             `${slot.label} hit its rate limit (HTTP ${
               error.response ? error.response.status : 429
-            })`
+            }${providerErrorCode ? `, code ${providerErrorCode}` : ''})`
           );
           // Fail over immediately — another team member answers now.
           throw error;
@@ -685,6 +745,45 @@ const callSlotChatCompletions = async ({
   // Keep the queue chain alive even if this task fails.
   runtime.queue = task.catch(() => {});
   return task;
+};
+
+/**
+ * Serialize an out-of-band request (connection test, model discovery)
+ * through the matching team slot's rate window. Free tiers such as Z.ai's
+ * GLM allow a single concurrent request per account: firing a "Test
+ * connection" while the agent is thinking returns HTTP 429 (code 1302) even
+ * with a perfect key. The wait is BOUNDED (~20s) so a test always answers
+ * quickly even when the provider is busy with a long agent request or a
+ * long cooldown — worst case the request hits the provider's rate limit and
+ * the caller shows its explanation. When no team slot matches the endpoint,
+ * the request runs directly.
+ */
+export const runGatedOnMatchingSlot = async (
+  baseUrl: string,
+  fn: () => Promise<any>
+): Promise<any> => {
+  try {
+    const target = sanitizeBaseUrl(baseUrl || '').toLowerCase();
+    if (!target) return fn();
+    const slot = getProviderSlots().find(
+      s => sanitizeBaseUrl(s.baseUrl).toLowerCase() === target
+    );
+    if (!slot) return fn();
+    const runtime = getRuntime(slot.id);
+    const deadline = Date.now() + 20000;
+    // Wait for the slot's in-flight request (bounded), then for a free
+    // rate-window slot (bounded by the same deadline).
+    await Promise.race([runtime.queue, sleep(20000)]);
+    for (;;) {
+      const waitMs = msUntilSlotFree(slot, runtime);
+      if (waitMs <= 0 || Date.now() >= deadline) break;
+      await sleep(Math.max(0, Math.min(waitMs, deadline - Date.now())));
+    }
+    runtime.requestTimestamps.push(Date.now());
+    return fn();
+  } catch (ignored) {
+    return fn();
+  }
 };
 
 export type OrchestratedResult = {|
@@ -750,6 +849,7 @@ export const chatCompletionWithFailover = async ({
   });
 
   const errors: Array<string> = [];
+  let lastRateLimitedSlot: ?AiProviderSlot = null;
   for (let index = 0; index < chain.length; index++) {
     const slot = chain[index];
     // A cooling-down provider is skipped when another ready team member can
@@ -800,6 +900,9 @@ export const chatCompletionWithFailover = async ({
       };
     } catch (error) {
       markSlotResult(slot, false);
+      if (isRateLimitError(error)) {
+        lastRateLimitedSlot = slot;
+      }
       errors.push(`${slot.label}: ${describeAiError(error, slot.baseUrl)}`);
       emitAiStatus({
         kind: 'provider-cooldown',
@@ -811,6 +914,48 @@ export const chatCompletionWithFailover = async ({
         timestamp: Date.now(),
       });
       // Continue to the next provider in the chain.
+    }
+  }
+
+  // Last resort: when a provider was rate-limited (typically the only
+  // usable one, e.g. a GLM-only setup), wait for its free-tier window to
+  // recover and retry once instead of failing the request outright —
+  // "AI answered 30s later" beats "All providers failed".
+  if (lastRateLimitedSlot) {
+    const waitMs = getSlotCooldownRemainingMs(lastRateLimitedSlot.id);
+    if (waitMs <= 60000) {
+      emitAiStatus({
+        kind: 'queued',
+        slotId: lastRateLimitedSlot.id,
+        label: lastRateLimitedSlot.label,
+        message: `${lastRateLimitedSlot.label} hit a rate limit but can recover — waiting ${Math.ceil(
+          (waitMs + 500) / 1000
+        )}s for its free-tier window, then one final retry.`,
+        timestamp: Date.now(),
+      });
+      if (waitMs > 0) await sleep(waitMs + 500);
+      try {
+        const data = await callSlotChatCompletions({
+          slot: lastRateLimitedSlot,
+          messages,
+          tools,
+          temperature,
+        });
+        markSlotResult(lastRateLimitedSlot, true);
+        return {
+          data,
+          slotId: lastRateLimitedSlot.id,
+          providerLabel: lastRateLimitedSlot.label,
+          model: lastRateLimitedSlot.model,
+        };
+      } catch (error) {
+        errors.push(
+          `${lastRateLimitedSlot.label}: ${describeAiError(
+            error,
+            lastRateLimitedSlot.baseUrl
+          )}`
+        );
+      }
     }
   }
 

@@ -132,11 +132,15 @@ export const AiProviderTab = (): React.Node => {
           Keys entered below are automatically applied to the matching team
           provider (e.g. paste your Z.ai key with the GLM preset and GLM 4.7
           Flash becomes ready). Keys set in "Configure Multi-AI Team" always
-          take priority. {teamReadyCount} provider(s) ready. The team queues
-          requests on free-tier rate limits (GLM ~40/min, Gemini ~15/min) and
-          fails over automatically. Gemini also powers web search and media
-          analysis for the primary agent.
+          take priority. The team queues requests on free-tier rate limits
+          (GLM ~5/min, Gemini ~10/min) and fails over automatically. Gemini
+          also powers web search and media analysis for the primary agent.
         </Trans>
+      </Text>
+      <Text size="body-small" noMargin>
+        {/* Keep the count OUTSIDE <Trans>: untranslated locales render the
+            raw "{teamReadyCount}" placeholder otherwise. */}
+        {teamReadyCount} <Trans>team provider(s) ready.</Trans>
       </Text>
 
       <Text size="sub-title">

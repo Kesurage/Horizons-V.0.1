@@ -8,6 +8,7 @@ import type {
 import {
   chatCompletionWithFailover,
   getProviderSlots,
+  runGatedOnMatchingSlot,
 } from './MultiAiOrchestrator';
 
 export type UniversalAiConfig = {
@@ -41,7 +42,7 @@ export const AI_PRESETS: {
     baseUrl: 'https://api.z.ai/api/paas/v4',
     model: 'glm-4.7-flash',
     description:
-      'Z.ai GLM — agent-oriented workhorse, generous free tier (~40 req/min). Get a key at z.ai.',
+      'Z.ai GLM — agent-oriented workhorse. Free tier: 5 req/min, 500 req/day, ONE request at a time. Get a key at z.ai.',
     requiresKey: true,
   },
   gemini: {
@@ -49,7 +50,7 @@ export const AI_PRESETS: {
     baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
     model: 'gemini-flash-latest',
     description:
-      'Google AI Studio — free tier ~15 req/min, huge context, vision + web search specialist.',
+      'Google AI Studio — free tier ~10 req/min, huge context, vision + web search specialist.',
     requiresKey: true,
   },
   ollama: {
@@ -186,9 +187,26 @@ export const describeAiError = (error: any, baseUrl: string): string => {
       } Check the Base URL (${baseUrl}) and the model name — try "Discover Models".`;
     }
     if (status === 429) {
+      const providerCode =
+        response.data && response.data.error
+          ? String(
+              response.data.error.code === undefined ||
+                response.data.error.code === null
+                ? ''
+                : response.data.error.code
+            )
+          : '';
+      if (
+        providerCode === '1113' ||
+        /balance|insufficient|资源|余额/i.test(providerMessage || '')
+      ) {
+        return `This model is not free on your account / the balance is insufficient (code 1113).${
+          providerMessage ? ` Provider says: "${providerMessage}"` : ''
+        } Use a free model (e.g. glm-4.7-flash) or top up your ${baseUrl} account.`;
+      }
       return `Rate limit or quota reached on the provider (HTTP 429).${
         providerMessage ? ` Provider says: "${providerMessage}"` : ''
-      } Wait a moment or check your plan/billing.`;
+      } Free tiers are strict: GLM allows ~5 req/min and ONE request at a time — requests from other apps or devices using the same key also count. Wait a moment, or add a second provider (e.g. Gemini) to the Multi-AI team so one answers while the other cools down.`;
     }
     if (status >= 500) {
       return `The provider had a server error (HTTP ${status}).${
@@ -278,10 +296,15 @@ export const testAiConnection = async (config: {
       temperature: 0.1,
     };
 
-    const response = await axios.post(`${baseUrl}/chat/completions`, payload, {
-      headers,
-      timeout: 45000,
-    });
+    // Serialize through the matching team slot's queue: free tiers such as
+    // Z.ai allow ONE concurrent request — a test fired while the agent is
+    // thinking would return HTTP 429 (code 1302) even with a perfect key.
+    const response = await runGatedOnMatchingSlot(config.baseUrl, () =>
+      axios.post(`${baseUrl}/chat/completions`, payload, {
+        headers,
+        timeout: 45000,
+      })
+    );
 
     const latencyMs = Date.now() - startTime;
     if (
@@ -382,10 +405,12 @@ export const fetchAvailableModels = async (config: {
   }
 
   try {
-    const response = await axios.get(`${baseUrl}/models`, {
-      headers,
-      timeout: 12000,
-    });
+    const response = await runGatedOnMatchingSlot(config.baseUrl, () =>
+      axios.get(`${baseUrl}/models`, {
+        headers,
+        timeout: 12000,
+      })
+    );
     const models = parseModelsResponseData(response.data);
     if (models.length === 0) {
       throw new Error(

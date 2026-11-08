@@ -203,7 +203,9 @@ export const AiQuickSettingsDialog = ({ open, onClose }: Props): React.Node => {
         />
         {teamReadyCount > 0 && (
           <Text size="body-small" noMargin>
-            <Trans>{teamReadyCount} AI provider(s) ready in your team.</Trans>
+            {/* Keep the count OUTSIDE <Trans>: untranslated locales render
+                the raw "{teamReadyCount}" placeholder otherwise. */}
+            <Trans>AI providers ready in your team:</Trans> {teamReadyCount}
           </Text>
         )}
 

@@ -138,47 +138,53 @@ jobs:
       - name: Rename APK
         run: |
           mkdir -p release
-          cp capacitor-app/android/app/build/outputs/apk/release/app-release.apk release/Horizons-v0.2.2.apk
+          cp capacitor-app/android/app/build/outputs/apk/release/app-release.apk release/Horizons-v0.2.3.apk
           ls -la release/
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: horizons-apk
-          path: release/Horizons-v0.2.2.apk
+          path: release/Horizons-v0.2.3.apk
           retention-days: 30
 
       - name: Publish to GitHub Releases
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.2.2
-          name: Horizons V.0.2.2 — AI team fixed (GLM + Gemini actually responding)
+          tag_name: v0.2.3
+          name: Horizons V.0.2.3 — AI connects reliably on the real free tiers
           body: |
-            ## Horizons V.0.2.2 APK
+            ## Horizons V.0.2.3 APK
 
-            Install: download `Horizons-v0.2.2.apk` on your Android device and open it (allow "install from unknown sources").
+            Install: download `Horizons-v0.2.3.apk` on your Android device and open it (allow "install from unknown sources").
 
-            ### The AI is fixed 🎉
+            ### Why the AI kept failing while your API key was fine
 
-            **Every AI request was crashing at startup of the reply** (`DEFAULT_AI_SYSTEM_PROMPT is not defined`) and the error handler itself was broken (`describeAiError is not defined`). Both crashes are fixed — chat, agent mode and event generation now actually reach your models:
+            The app assumed the Z.ai free tier allows **40 requests/minute**. It actually allows **5 requests/minute, 500 requests/day and ONE request at a time**. The editor itself burned through that quota in seconds, so every request — including "Test Connection" — returned **HTTP 429**, while testing the same key in another tool worked perfectly. This release fixes exactly that:
 
-            - **Fix: crash on every AI message** — a missing import killed each request before it reached the provider
-            - **Fix: crash in the error handler** — provider errors (rate limit, bad key) now show a readable, actionable message instead of breaking the chat
-            - **Fix: keys pasted in Preferences → AI Provider were ignored** — they now flow automatically into the Multi-AI team (GLM primary / Gemini specialist). Keys set in the team dialog keep priority
-            - **Fix: infinite tool-call retry loop** — if a request failed after the model called a tool, the editor re-executed it forever (duplicating project changes). Dangling tool calls are now closed with an "interrupted" result and the conversation recovers
-            - **Fix: HTTP 400 "tool_calls must be followed by tool messages"** — broken conversations are healed automatically before being sent to the provider
-            - **Faster failover on free tiers** — a 429 no longer retries the same provider 3× (up to minutes of silence): the next team member (GLM ↔ Gemini) answers immediately; cooling-down providers are skipped while an alternative is ready
-            - **Better connection test** — works with reasoning models (GLM 4.x thinking) that used to reply "" with the old 10-token budget, and decodes Gemini's array-shaped error bodies
-            - Same as v0.2.1: fully offline editor + GDJS runtime, in-app preview, real file saving, no accounts/subscriptions
+            - **Fix: correct free-tier limits** — GLM 5 req/min (500/day), Gemini ~10 req/min. Existing installs migrate automatically; requests queue and space themselves out instead of hammering the API
+            - **Fix: self-inflicted 429 on "Test Connection"** — the test now queues through the same rate window as the AI agent (free tiers allow a single concurrent request per key: testing while the agent was thinking triggered 429)
+            - **Fix: Z.ai error codes handled properly** — 1302 rate limit (30s cooldown, instant failover to the next team member), 1305 temporary overload (short retry on the same provider), 1113 paid-model/no-balance (clear message instead of a confusing "rate limit")
+            - **Fix: lone-provider recovery** — if your only configured provider hits a rate limit, the request waits for the window to recover (~10–30s) and retries once, instead of failing with "All providers failed"
+            - **Fix: `{teamReadyCount}` placeholder** — the AI settings screens showed the raw variable instead of your ready-provider count
+            - **Clearer 429 messages** — they now explain that requests from other apps/devices using the same key also count, and suggest adding a second provider
 
             ### Setup (BYOK — bring your own keys)
 
             1. Get free keys: [Z.ai](https://z.ai) (GLM 4.7 Flash — free) and [Google AI Studio](https://aistudio.google.com) (Gemini Flash — free tier)
-            2. In the app: Preferences → AI Provider → paste your key (GLM or Gemini preset), or "Configure Multi-AI Team" to set both
-            3. Press **Test** to verify, then chat with the AI panel / use agent mode
+            2. In the app: Preferences → AI Provider → paste your GLM key, **and add the Gemini key too** (Configure Multi-AI Team) — when GLM hits its 5 req/min ceiling, Gemini answers instead, automatically
+            3. Press **Test** to verify. Note: on the free tiers, long agent tasks queue requests ~12s apart on GLM — the app paces them for you
+
+            ### Free-tier cheat sheet
+
+            | Provider | RPM | Daily cap | Concurrency |
+            | --- | --- | --- | --- |
+            | GLM 4.7 Flash (Z.ai) | 5 | 500/day | 1 |
+            | Gemini Flash (Google) | ~10 | varies | 1+ |
+            | Both as a team | ~15 combined | — | automatic failover |
           draft: false
           prerelease: false
-          files: release/Horizons-v0.2.2.apk
+          files: release/Horizons-v0.2.3.apk
           fail_on_unmatched_files: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

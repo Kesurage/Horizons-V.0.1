@@ -139,11 +139,17 @@ const getPriceAndRequestsTextAndTooltip = ({
 
   const aiCreditsAvailable = Math.max(0, quota.max - quota.current);
 
+  // Keep the numbers OUTSIDE <Trans>: untranslated locales render the raw
+  // "{variable}" placeholder otherwise.
   const currentQuotaText = (
-    <Trans>{aiCreditsAvailable} AI credits available</Trans>
+    <span>
+      <Trans>AI credits available:</Trans> {aiCreditsAvailable}
+    </span>
   );
   const creditsText = (
-    <Trans>{Math.max(0, availableCredits)} credits available</Trans>
+    <span>
+      <Trans>Credits available:</Trans> {Math.max(0, availableCredits)}
+    </span>
   );
 
   const timeForReset = quota.resetsAt ? new Date(quota.resetsAt) : null;
