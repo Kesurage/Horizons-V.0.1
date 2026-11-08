@@ -1253,6 +1253,14 @@ export const injectResearchNotesIntoMessages = (
     content: `TEAM RESEARCH NOTES (from the researcher AI, working in parallel — use them to improve what you build):\n${session.notes}`,
   });
   session.injected = true;
+  // Make the A↔A communication VISIBLE to the user in the team channel.
+  emitAiStatus({
+    kind: 'team-parallel',
+    slotId: null,
+    label: session.specialistLabel,
+    message: `${session.specialistLabel} → builder: research notes delivered (${session.notes.length} chars) — the builder takes them into account.`,
+    timestamp: Date.now(),
+  });
   return true;
 };
 

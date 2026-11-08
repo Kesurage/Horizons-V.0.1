@@ -6,7 +6,10 @@ import RefreshIcon from '../../../UI/CustomSvgIcons/Refresh';
 import Text from '../../../UI/Text';
 
 type Props = {|
-  previewIndexHtmlLocation: string,
+  /** URL of the preview index.html (service-worker served). */
+  previewIndexHtmlLocation?: ?string,
+  /** Self-contained preview page (blob-based, no service worker needed). */
+  previewSrcDoc?: ?string,
   reloadKey: number,
   onClose: () => void,
   onIframeAvailable: (contentWindow: any) => void,
@@ -73,7 +76,12 @@ class PreviewOverlayDialog extends React.Component<Props> {
   };
 
   render() {
-    const { previewIndexHtmlLocation, reloadKey, onClose } = this.props;
+    const {
+      previewIndexHtmlLocation,
+      previewSrcDoc,
+      reloadKey,
+      onClose,
+    } = this.props;
 
     return (
       <div style={styles.overlay}>
@@ -90,11 +98,19 @@ class PreviewOverlayDialog extends React.Component<Props> {
               onClick={() => {
                 // Force a fresh load of the preview.
                 if (this._iframe) {
-                  const location = this._iframe.src;
-                  this._iframe.src = 'about:blank';
-                  setTimeout(() => {
-                    if (this._iframe) this._iframe.src = location;
-                  }, 50);
+                  if (this.props.previewSrcDoc) {
+                    const doc = this.props.previewSrcDoc;
+                    this._iframe.srcdoc = '';
+                    setTimeout(() => {
+                      if (this._iframe) this._iframe.srcdoc = doc;
+                    }, 50);
+                  } else {
+                    const location = this._iframe.src;
+                    this._iframe.src = 'about:blank';
+                    setTimeout(() => {
+                      if (this._iframe) this._iframe.src = location;
+                    }, 50);
+                  }
                 }
               }}
               size="small"
@@ -110,7 +126,8 @@ class PreviewOverlayDialog extends React.Component<Props> {
           key={reloadKey}
           ref={this._handleIframeRef}
           title="Horizons game preview"
-          src={previewIndexHtmlLocation}
+          src={previewSrcDoc ? 'about:blank' : previewIndexHtmlLocation}
+          srcDoc={previewSrcDoc || undefined}
           onLoad={this._handleIframeLoad}
           style={styles.iframe}
           allow="autoplay; fullscreen; accelerometer; gyroscope; gamepad *"

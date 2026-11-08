@@ -841,6 +841,7 @@ export const AVAILABLE_ENGINE_EXTENSIONS = `
 - BBText: objects: BBText
 - BitmapText: objects: BitmapTextObject
 - DestroyOutsideBehavior: behaviors: DestroyOutsideBehavior::DestroyOutside
+- DialogueTree: dialogue functions (built-in Yarn Spinner system — accepts classic Yarn JSON and Yarn Spinner 2 JSON exports): actions "DialogueTree::LoadDialogueFromJsonFile" (load a Yarn JSON file), "DialogueTree::LoadDialogueFromSceneVariable", "DialogueTree::StartDialogueFromBranch", "DialogueTree::GoToNextLine", "DialogueTree::ConfirmSelectOption", "DialogueTree::StopRunningDialogue"; conditions "DialogueTree::IsDialogueRunning", "DialogueTree::IsDialogueLineType", "DialogueTree::CurrentBranchTitle", "DialogueTree::HasBranch"; expressions "DialogueTree::LineText()", "DialogueTree::OptionsCount()", "DialogueTree::Option(index)", "DialogueTree::BranchTitle()" — use them for branching dialogues, NPC conversations and choices
 - DraggableBehavior: behaviors: DraggableBehavior::Draggable
 - Lighting: objects: LightObject; behaviors: Lighting::LightObstacleBehavior
 - Multiplayer: behaviors: MultiplayerObjectBehavior
@@ -932,6 +933,15 @@ Common builtin instruction types (value field):
 - Actions: "Create", "Delete", "SetPosition", "AddForceXY", "SetAngle", "ChangeAnimation", "ChangeText", "ChangeVarScene", "AddVarScene", "ChangeObjectVariable", "AddObjectVariable", "ResetTimer", "PauseTimer", "PlaySound", "PlayMusic", "PlaySoundCanal", "Scene", "Quit", "SetSceneVariable", "SetObjectVariable"... plus every behavior action like "SetPropertyOfPlatformerObject", "SetGravityOfPhysics2"...
 Common condition/action type names must be the FULL name of the instruction as registered by its extension (e.g. "BuiltinCommonInstructions::Standard" for the event type itself; instructions are identified by short names like "Collision", "Create", "Delete", "SetPosition"...). If unsure, prefer simple builtin instructions.
 Other event types: "BuiltinCommonInstructions::ForEach" (parameters: ["", "Object"]), "BuiltinCommonInstructions::Repeat" (parameters: ["", "timesExpression"]), "BuiltinCommonInstructions::While", "BuiltinCommonInstructions::Comment" (parameters: ["", "comment text", ""]), "BuiltinCommonInstructions::Group".
+A JavaScript code event is:
+{
+  "type": "BuiltinCommonInstructions::JsCode",
+  "inlineCode": "console.log('hello');",
+  "parameterObjects": "MyObject",
+  "useStrict": true,
+  "disabled": false
+}
+"inlineCode" is the JavaScript to run. "parameterObjects" is a comma-separated list of object names the code needs — inside the code, get them with runtimeScene.getObjects("MyObject"); "runtimeScene" and "gdjs" are available. The code can also use objects passed via "parameterObjects". Use JavaScript code events ONLY when something cannot be expressed with builtin instructions/expressions.
 Sub-events go in the "events" array of the parent event.
 `;
 
@@ -1171,7 +1181,12 @@ export const runUniversalAiTurn = async ({
   /** Latest user message, used ONLY to trigger parallel team research
    * (not appended to the messages — history already carries it). */
   researchPrompt?: ?string,
-}): Promise<{ messages: Array<any> }> => {
+}): Promise<{|
+  messages: Array<any>,
+  /** The provider that produced the final answer (for the UI badge). */
+  providerLabel: ?string,
+  model: ?string,
+|}> => {
   const chatMessages: Array<any> = [{ role: 'system', content: systemPrompt }];
 
   const historyOutput = historyGDevelopOutput || existingHistoryOutput || null;
@@ -1266,6 +1281,8 @@ export const runUniversalAiTurn = async ({
       ...responseMessage,
       content: finalText,
     }),
+    providerLabel: result.providerLabel || null,
+    model: result.model || null,
   };
 };
 

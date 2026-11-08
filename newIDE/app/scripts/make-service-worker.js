@@ -84,6 +84,9 @@ const buildSW = () => {
 
         // External libs:
 
+        // Workbox (served locally so the SW works fully offline)
+        'external/workbox/3.5.0/*.js',
+
         // Zip.js
         'external/zip.js/WebContent/{deflate,inflate,z-worker,zip}.js', // Zip.js
         'external/zip.js/WebContent/zlib-asm/codecs.js', // zlib-asm codec for Zip.js

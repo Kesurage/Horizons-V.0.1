@@ -131,6 +131,20 @@ export default class BrowserSWFileSystem {
     }
   };
 
+  /**
+   * All the files written during this export (path relative to the preview
+   * instance root, content and content-type). Used by the Horizons app shell
+   * to build a fully self-contained (blob-based) preview without depending
+   * on the service worker.
+   */
+  getAllWrittenFiles = (): Array<{|
+    path: string,
+    content: string,
+    contentType: string,
+  |}> => {
+    return this._pendingFiles;
+  };
+
   mkDir = (path: string) => {
     // Assume required directories always exist in a virtual file system.
   };

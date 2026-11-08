@@ -27,8 +27,117 @@ namespace gdjs {
     let dialogueBranchTags: Array<string> = [];
     let dialogueBranchBody = '';
 
+/**
+     * Extract a node's body (and title/tags) from a full Yarn Spinner node
+     * script ("title: X\n---\nbody\n==="). Returns null when the text is not
+     * a full node script.
+     */
+    function extractYarnNodeScript(
+      text: string
+    ): { title: string; tags: Array<string>; body: string } | null {
+      const separator = '\n---\n';
+      const separatorIndex = text.indexOf(separator);
+      if (separatorIndex === -1) return null;
+
+      const header = text.slice(0, separatorIndex);
+      let body = text.slice(separatorIndex + separator.length);
+      const endIndex = body.lastIndexOf('\n===');
+      if (endIndex !== -1) body = body.slice(0, endIndex);
+
+      const titleMatch = header.match(/^title:\s*(.+)$/m);
+      const tagsMatch = header.match(/^tags:\s*(.+)$/m);
+      return {
+        title: titleMatch ? titleMatch[1].trim() : '',
+        tags: tagsMatch
+          ? tagsMatch[1]
+              .trim()
+              .split(/\s+/)
+              .filter(Boolean)
+          : [],
+        body: body,
+      };
+    }
+
+    /**
+     * Convert a Yarn Spinner 2.x JSON export ({ formatVersion, nodes: [...] })
+     * into the classic Yarn JSON node array ({ title, body, tags, position })
+     * understood by the bundled Yarn runtime (bondage.js). Returns null when
+     * the data is not a Yarn Spinner 2 JSON object.
+     */
+    function convertYarnSpinner2Json(data: any): Array<any> | null {
+      if (!data || typeof data !== 'object' || !Array.isArray(data.nodes)) {
+        return null;
+      }
+
+      const convertedNodes: Array<any> = [];
+      for (const node of data.nodes) {
+        if (!node || typeof node !== 'object') continue;
+
+        // Full node script (title header + body): the most common export.
+        if (typeof node.text === 'string' && node.text.indexOf('\n---\n') !== -1) {
+          const extracted = extractYarnNodeScript(node.text);
+          if (extracted && extracted.title) {
+            convertedNodes.push({
+              title: extracted.title,
+              body: extracted.body,
+              tags: Array.isArray(node.tags) ? node.tags : extracted.tags,
+              position: node.position || { x: 0, y: 0 },
+            });
+            continue;
+          }
+        }
+
+        // Body-only / other shapes: fall back on the available fields.
+        const body =
+          typeof node.body === 'string'
+            ? node.body
+            : typeof node.text === 'string'
+            ? node.text
+            : '';
+        const title = node.name || node.title || node.id;
+        if (title && body) {
+          convertedNodes.push({
+            title: String(title),
+            body: body,
+            tags: Array.isArray(node.tags) ? node.tags : [],
+            position: node.position || { x: 0, y: 0 },
+          });
+        }
+      }
+
+      return convertedNodes.length > 0 ? convertedNodes : null;
+    }
+
+    /**
+     * Accept BOTH Yarn JSON formats:
+     *  - the classic node array used by the built-in editor/bondage.js, and
+     *  - Yarn Spinner 2.x JSON exports ({ formatVersion, nodes: [...] }),
+     *    converted automatically so dialogues authored in the modern Yarn
+     *    Spinner editor just work.
+     */
+    function normalizeYarnData(data: any): any[] {
+      if (Array.isArray(data)) {
+        // Classic Yarn JSON — still normalise node tags for safety.
+        return data;
+      }
+
+      const converted = convertYarnSpinner2Json(data);
+      if (converted) {
+        logger.log(
+          'Detected a Yarn Spinner 2 JSON — converted ' +
+            converted.length +
+            ' nodes to the classic Yarn format.'
+        );
+        return converted;
+      }
+
+      // Unknown shape: return as-is and let the Yarn runtime report the error.
+      return data;
+    }
+
     /**
      * Load the Dialogue Tree data of the game. Initialize The Dialogue Tree, so as it can be used in the game.
+     * Accepts the classic Yarn JSON format as well as Yarn Spinner 2.x JSON exports.
      * @param sceneVar The variable to load the Dialogue tree data from. The data is a JSON string, created by Yarn.
      * @param startDialogueNode The Dialogue Branch to start the Dialogue Tree from. If left empty, the data will only be loaded, but can later be initialized via another action
      */
@@ -37,7 +146,7 @@ namespace gdjs {
       startDialogueNode: string
     ) {
       try {
-        const yarnData = JSON.parse(sceneVar.getAsString());
+        const yarnData = normalizeYarnData(JSON.parse(sceneVar.getAsString()));
         runner.load(yarnData);
         if (startDialogueNode && startDialogueNode.length > 0) {
           gdjs.dialogueTree.startFrom(startDialogueNode);
@@ -49,9 +158,10 @@ namespace gdjs {
 
     /**
      * Load the Dialogue Tree data from a JSON resource.
+     * Accepts the classic Yarn JSON format as well as Yarn Spinner 2.x JSON exports.
      *
      * @param instanceContainer The scene where the dialogue is running.
-     * @param jsonResourceName The JSON resource where to load the Dialogue Tree data from. The data is a JSON string usually created with [Yarn Dialogue Editor](https://github.com/InfiniteAmmoInc/Yarn).
+     * @param jsonResourceName The JSON resource where to load the Dialogue Tree data from. The data is a JSON string usually created with [Yarn Dialogue Editor](https://github.com/InfiniteAmmoInc/Yarn) or [Yarn Spinner](https://yarnspinner.dev).
      * @param startDialogueNode The Dialogue Branch to start the Dialogue Tree from. If left empty, the data will only be loaded, but can later be initialized via another action
      */
     export function loadFromJsonFile(
@@ -72,7 +182,7 @@ namespace gdjs {
             if (!content) {
               return;
             }
-            const yarnData = content as any[];
+            const yarnData = normalizeYarnData(content);
             try {
               runner.load(yarnData);
             } catch (error) {

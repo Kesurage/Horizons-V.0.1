@@ -163,6 +163,10 @@ export type AiRequestAssistantMessage = {
   suggestions?: AiRequestSuggestions,
   messageId?: string,
   projectVersionIdAfterMessage?: string,
+  /** Horizons: which team provider produced this answer (UI badge). */
+  providerLabel?: ?string,
+  /** Horizons: the exact model used for this answer. */
+  model?: ?string,
 };
 
 export type AiRequestUserMessage = {
@@ -515,13 +519,28 @@ export const createAiRequest = async (
       customSystemPrompt: config.customSystemPrompt,
     });
 
-    const { messages: assistantMessages } = await runUniversalAiTurn({
-      config,
-      systemPrompt,
-      newUserPrompt: userRequest,
-      mode: effectiveMode,
-      teamSessionId: aiRequestId,
-      projectDigest,
+    const { messages: assistantMessages, providerLabel, model } =
+      await runUniversalAiTurn({
+        config,
+        systemPrompt,
+        newUserPrompt: userRequest,
+        mode: effectiveMode,
+        teamSessionId: aiRequestId,
+        projectDigest,
+      });
+
+    // Stamp the provider that answered so the chat can show it ("via
+    // Gemini…" / "via GLM…") — the user can finally SEE who did what.
+    (assistantMessages: Array<AiRequestMessage>).forEach(message => {
+      if (
+        message &&
+        message.type === 'message' &&
+        message.role === 'assistant'
+      ) {
+        const assistantMessage = (message: AiRequestAssistantMessage);
+        assistantMessage.providerLabel = providerLabel || null;
+        assistantMessage.model = model || null;
+      }
     });
 
     const newAiRequest: AiRequest = {
@@ -688,15 +707,29 @@ export const addMessageToAiRequest = async (
       fullOutput
     );
 
-    const { messages: assistantMessages } = await runUniversalAiTurn({
-      config,
-      systemPrompt,
-      historyGDevelopOutput: fullOutput,
-      newUserPrompt: null,
-      mode: effectiveMode,
-      teamSessionId: aiRequestId,
-      projectDigest,
-      researchPrompt: userMessage || null,
+    const { messages: assistantMessages, providerLabel, model } =
+      await runUniversalAiTurn({
+        config,
+        systemPrompt,
+        historyGDevelopOutput: fullOutput,
+        newUserPrompt: null,
+        mode: effectiveMode,
+        teamSessionId: aiRequestId,
+        projectDigest,
+        researchPrompt: userMessage || null,
+      });
+
+    // Stamp the provider that answered (UI badge in the chat).
+    (assistantMessages: Array<AiRequestMessage>).forEach(message => {
+      if (
+        message &&
+        message.type === 'message' &&
+        message.role === 'assistant'
+      ) {
+        const assistantMessage = (message: AiRequestAssistantMessage);
+        assistantMessage.providerLabel = providerLabel || null;
+        assistantMessage.model = model || null;
+      }
     });
 
     const updatedRequest: AiRequest = {

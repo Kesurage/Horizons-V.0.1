@@ -25,6 +25,10 @@ import {
 import { setEmbeddedGameFramePreviewLocation } from '../../../EmbeddedGame/EmbeddedGameFrame';
 import { immediatelyOpenNewPreviewWindow } from '../BrowserPreview/BrowserPreviewWindow';
 import PreviewOverlayDialog from '../BrowserPreview/PreviewOverlayDialog';
+import {
+  buildOverlayPreviewHtml,
+  revokeOverlayPreviewBlobUrls,
+} from '../BrowserPreview/CapacitorPreviewBuilder';
 const gd: libGDevelop = global.gd;
 
 let nextPreviewId = 1;
@@ -72,7 +76,11 @@ const prepareExporter = async ({
 
 type State = {|
   error: ?Error,
-  overlayPreview: ?{| location: string, reloadKey: number |},
+  overlayPreview: ?{|
+    location: ?string,
+    srcDoc: ?string,
+    reloadKey: number,
+  |},
 |};
 
 export default class BrowserSWPreviewLauncher extends React.Component<
@@ -431,9 +439,34 @@ export default class BrowserSWPreviewLauncher extends React.Component<
         console.log(
           '[BrowserSWPreviewLauncher] Showing the preview in the in-app preview overlay.'
         );
+        let overlayLocation = outputDir + '/index.html';
+        let overlaySrcDoc = null;
+        if (isRunningInCapacitor()) {
+          // In the app shell, build a fully self-contained preview page
+          // (generated files as blob URLs, runtime from the local /Runtime
+          // folder) so previews never depend on the service worker.
+          try {
+            overlaySrcDoc = buildOverlayPreviewHtml({
+              files: browserSWFileSystem.getAllWrittenFiles(),
+            });
+            overlayLocation = null;
+            console.log(
+              '[BrowserSWPreviewLauncher] Built a self-contained preview for the in-app overlay.'
+            );
+          } catch (error) {
+            console.warn(
+              '[BrowserSWPreviewLauncher] Could not build the self-contained preview — falling back to the service-worker served URL:',
+              error
+            );
+          }
+        }
+        if (this.state.overlayPreview && this.state.overlayPreview.srcDoc) {
+          revokeOverlayPreviewBlobUrls(this.state.overlayPreview.srcDoc);
+        }
         this.setState({
           overlayPreview: {
-            location: outputDir + '/index.html',
+            location: overlayLocation,
+            srcDoc: overlaySrcDoc,
             reloadKey: Date.now(),
           },
         });
@@ -480,6 +513,7 @@ export default class BrowserSWPreviewLauncher extends React.Component<
         {overlayPreview && (
           <PreviewOverlayDialog
             previewIndexHtmlLocation={overlayPreview.location}
+            previewSrcDoc={overlayPreview.srcDoc}
             reloadKey={overlayPreview.reloadKey}
             onClose={() => {
               if (this.overlayIframeWindow) {

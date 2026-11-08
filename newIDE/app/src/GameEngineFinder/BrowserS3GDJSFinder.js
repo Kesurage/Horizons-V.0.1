@@ -1,6 +1,8 @@
 // @flow
 import Window from '../Utils/Window';
+import { isRunningInCapacitor } from '../Utils/Platform';
 import { getIDEVersionWithHash } from '../Version';
+import { BUNDLED_RUNTIME_INDEX_HTML } from './BundledRuntimeTemplate';
 
 type FileSet =
   | 'preview'
@@ -51,6 +53,28 @@ export const findGDJS = (
 
   if (Window.isDev()) {
     gdjsRoot = `http://localhost:5002`;
+  }
+
+  // Horizons app shell (Android APK): the GDJS runtime is ALWAYS bundled
+  // with the app (CI copies it next to the editor as "/Runtime"). Use the
+  // local runtime root and the index.html template inlined in the JS bundle
+  // so the preview pipeline needs ZERO network requests — fully offline,
+  // including the very first preview.
+  if (isRunningInCapacitor() && !Window.isDev()) {
+    const origin = window.location.origin;
+    console.info(
+      '[BrowserS3GDJSFinder] Capacitor app shell: using the bundled GDJS runtime and inlined template.'
+    );
+    return Promise.resolve({
+      gdjsRoot: origin,
+      filesContent: filesToDownload[fileSet].map(relativeFilePath => ({
+        filePath: `${origin}${relativeFilePath}`,
+        text:
+          relativeFilePath === '/Runtime/index.html'
+            ? BUNDLED_RUNTIME_INDEX_HTML
+            : '',
+      })),
+    });
   }
 
   // Horizons: prefer the GDJS runtime bundled with the app itself (works

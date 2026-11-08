@@ -33,6 +33,7 @@ import BrowserEventsFunctionsExtensionOpener from './EventsFunctionsExtensionsLo
 import BrowserEventsFunctionsExtensionWriter from './EventsFunctionsExtensionsLoader/Storage/BrowserEventsFunctionsExtensionWriter';
 import BrowserLoginProvider from './LoginProvider/BrowserLoginProvider';
 import { isServiceWorkerSupported } from './ServiceWorkerSetup';
+import { isRunningInCapacitor } from './Utils/Platform';
 import { ensureBrowserSWPreviewSession } from './ExportAndShare/BrowserExporters/BrowserSWPreviewLauncher/BrowserSWPreviewIndexedDB';
 
 export const create = (authentication: Authentication): React.Node => {
@@ -45,7 +46,12 @@ export const create = (authentication: Authentication): React.Node => {
 
   // TODO: make a hook that allows this to change, so we can switch to S3
   // (and log this into Posthog).
-  const canUseBrowserSW = isServiceWorkerSupported();
+  // In the Horizons app shell (Capacitor/Android), ALWAYS use the browser SW
+  // preview launcher: it shows previews in the in-app overlay (built from
+  // blob URLs — it does not even require the service worker to run), while
+  // the S3 launcher would try to upload the game to a cloud service.
+  const canUseBrowserSW =
+    isServiceWorkerSupported() || isRunningInCapacitor();
   if (canUseBrowserSW) ensureBrowserSWPreviewSession();
 
   app = (

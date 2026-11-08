@@ -26,7 +26,7 @@ module.exports = {
         'Open source (MIT License)'
       )
       .setShortDescription(
-        'Yarn Spinner dialogue trees: branching dialogues, choices, commands, variables. Built-in editor.'
+        'Yarn Spinner dialogue trees: branching dialogues, choices, commands, variables. Built-in editor. Accepts Yarn Spinner 2 JSON exports.'
       )
       .setExtensionHelpPath('/all-features/dialogue-tree')
       .setCategory('Game mechanic');
@@ -39,7 +39,7 @@ module.exports = {
         'LoadDialogueFromSceneVariable',
         _('Load dialogue tree from a scene variable'),
         _(
-          'Load a dialogue data object - Yarn JSON format, stored in a scene variable. Use this command to load all the Dialogue data at the beginning of the game.'
+          'Load a dialogue data object - Yarn JSON format, stored in a scene variable (classic Yarn JSON or Yarn Spinner 2.x JSON export — both accepted). Use this command to load all the Dialogue data at the beginning of the game.'
         ),
         _('Load dialogue data from scene variable _PARAM0_'),
         '',
@@ -62,7 +62,7 @@ module.exports = {
         'LoadDialogueFromJsonFile',
         _('Load dialogue tree from a JSON file'),
         _(
-          'Load a dialogue data object - Yarn JSON format, stored in a JSON file. Use this command to load all the Dialogue data at the beginning of the game.'
+          'Load a dialogue data object - Yarn JSON format, stored in a JSON file (classic Yarn JSON or Yarn Spinner 2.x JSON export — both accepted). Use this command to load all the Dialogue data at the beginning of the game.'
         ),
         _('Load dialogue data from JSON file _PARAM1_'),
         '',

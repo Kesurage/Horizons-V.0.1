@@ -49,3 +49,11 @@
   content: "\e903";
   margin-bottom: -2px;
 }
+
+/* Global keyframes used by the AI team status indicators (inline styles
+   reference these by name, so they must live in a global stylesheet). */
+@keyframes gd-ai-pulse {
+  0% { opacity: 1; }
+  50% { opacity: 0.35; }
+  100% { opacity: 1; }
+}

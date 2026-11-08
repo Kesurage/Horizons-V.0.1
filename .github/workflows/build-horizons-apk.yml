@@ -13,7 +13,6 @@ on:
       - '**.md'
       - 'Core/**'
       - 'GDJS/**'
-      - 'Extensions/**'
       - 'ExtLibs/**'
 
 permissions:
@@ -110,15 +109,21 @@ jobs:
           cp -r ../web-build/* www/
           npx cap init "Horizons" "com.kesurage.horizons" --web-dir www
           npx cap add android
-          # Serve over https://localhost so web APIs (IndexedDB, crypto) work,
-          # route fetch through native to avoid any CORS issue with AI providers,
+          # Serve over https://localhost so web APIs (IndexedDB, crypto) work
           # and keep the screen active while the editor is open.
+          # CapacitorHttp stays DISABLED globally: both supported AI providers
+          # (Z.ai and Google AI Studio) allow CORS from https://localhost, so
+          # the WebView's own fetch works for them — while local requests
+          # (preview files, /Runtime, service worker) MUST go through the
+          # WebView's normal network stack to reach the app assets. AI calls
+          # that fail at the network level are still retried once through the
+          # native CapacitorHttp plugin (CORS-free) by the AI network core.
           node -e "
             const fs = require('fs');
             const config = JSON.parse(fs.readFileSync('capacitor.config.json', 'utf8'));
             config.server = { androidScheme: 'https', cleartext: false };
             config.android = { allowMixedContent: false, webContentsDebuggingEnabled: true };
-            config.plugins = { CapacitorHttp: { enabled: true } };
+            config.plugins = { CapacitorHttp: { enabled: false } };
             config.backgroundColor = '#252525';
             fs.writeFileSync('capacitor.config.json', JSON.stringify(config, null, 2));
           "
@@ -167,53 +172,50 @@ jobs:
       - name: Rename APK
         run: |
           mkdir -p release
-          cp capacitor-app/android/app/build/outputs/apk/release/app-release.apk release/Horizons-v0.2.4.apk
+          cp capacitor-app/android/app/build/outputs/apk/release/app-release.apk release/Horizons-v0.2.5.apk
           ls -la release/
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: horizons-apk
-          path: release/Horizons-v0.2.4.apk
+          path: release/Horizons-v0.2.5.apk
           retention-days: 30
 
       - name: Publish to GitHub Releases
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.2.4
-          name: Horizons V.0.2.4 — parallel AI team (builder + researcher), overload-proof, offline
+          tag_name: v0.2.5
+          name: Horizons V.0.2.5 — offline preview, visible AI team, Yarn Spinner 2 dialogues
           body: |
-            ## Horizons V.0.2.4 APK — the AI team now works in PARALLEL
+            ## Horizons V.0.2.5 APK
 
-            Install: download `Horizons-v0.2.4.apk` on your Android device and open it (allow "install from unknown sources").
+            Install: download `Horizons-v0.2.5.apk` on your Android device and open it (allow "install from unknown sources").
 
-            ### What was really going on with "rate limit" and "no response"
+            ### Preview now works — fully offline, inside the app
 
-            Your key was fine all along — two separate engine bugs made it look broken:
+            The preview was fundamentally broken in the app shell (it tried to open a popup browser window — impossible on Android WebView — and needed GDevelop's CDN + Google's CDN even to start). It is now:
 
-            1. **"Rate limit is over" on GLM**: Z.ai's *free* flash servers are globally shared and regularly answer `429 — "The service may be temporarily overloaded"` (Z.ai code **1305**). That is Z.ai being busy, NOT your quota and NOT your key — which is exactly why the same key tested "fine and fast" elsewhere. The app used to show it as a scary rate-limit error after one try. **Now it auto-retries patiently (up to 4 attempts) with a visible "Z.ai's free servers are momentarily busy — retrying" status.**
-            2. **Gemini never responding**: some requests could hang forever with no timeout ever firing. All AI networking now goes through a new fetch core with a **guaranteed watchdog timeout** — every request always answers.
-            3. **Over-throttling**: the previous build assumed "5 req/min, ONE request at a time" and paced every GLM request 12+ seconds apart. GLM 4.7 Flash actually allows bursts. Pacing is now **adaptive**: fast when the provider is healthy, backs off automatically when it returns real rate limits (code 1302), recovers after successes.
+            - shown in a **full-screen in-app preview** (with refresh & close) instead of a popup;
+            - built from the game files directly (blob URLs) — **it does not even need the service worker**;
+            - running the **game engine bundled inside the APK** (`/Runtime`), so it works with zero network;
+            - the service worker (used by the web version) now ships its workbox runtime locally — no Google CDN anymore.
 
-            ### The Multi-AI team is now a real TEAM, not a fallback chain
+            ### See your AI team work — and talk to each other
 
-            You asked for both AIs working together on different jobs — done (architecture inspired by [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness), MIT):
+            - A persistent **AI Team panel** sits at the top of the chat: one live card per provider (GLM = Builder, Gemini = Researcher) showing its model, status (ready / working / cooling down / no key) and recent activity.
+            - The **Team channel** below the cards shows the messages the AIs exchange while they work: "Gemini starts researching in parallel…", "Gemini → builder: research notes delivered", retries, queueing…
+            - Every answer is now signed with a **"via GLM 4.7 Flash · glm-4.7-flash"** badge — you always know who answered.
+            - AI networking: the WebView's own network stack is used again (both Z.ai and Google AI Studio allow it — verified), which is what makes local preview files reachable; requests that fail at the network level are still retried once through the native stack (CORS-free).
 
-            - **GLM = Builder**: implements your request with tools (objects, events, behaviors) — as before.
-            - **Gemini = Researcher**: starts **at the same time** on the same request — asset/UX suggestions, gameplay polish, pitfalls to avoid — on its own provider and rate window (never stealing GLM's).
-            - The builder receives the researcher's notes mid-build and uses them; the final answer carries them, clearly labelled ("Team researcher — worked in parallel").
-            - The chat now shows **live team status** while working (who is building, who is researching, retries, queueing) instead of a silent "Thinking...".
-            - Failover remains as a safety net when a provider is truly down.
+            ### Yarn dialogues: Yarn Spinner 2 JSON now works
 
-            ### GDevelop cloud services removed (offline + privacy)
+            The built-in Dialogue Tree (Yarn) extension now **auto-detects both Yarn JSON formats**: the classic one and the **Yarn Spinner 2.x JSON export** (from the modern Yarn Spinner editor) — converted automatically on load. "Load dialogue tree from a JSON file / scene variable" accepts either.
 
-            All GDevelop cloud services are gone except the **extension shop**: no more Firebase accounts, no PostHog analytics, no AI-settings CDN fetch, no cloud AI presets — nothing phones home. Everything (projects, AI with YOUR keys, history, exports) stays on-device. The extension shop and example templates (static files from GitHub) remain.
+            ### JavaScript code events: AI knows them
 
-            ### Also in this release
-
-            - Precise error messages per Z.ai code: 1305 (servers busy — key fine), 1302 (rate limit — other apps with the same key count too), 1113 (model not free / balance), 1311 (plan lacks model), 1310/1308 (usage window — resets automatically)
-            - "Test Connection" retries transient provider conditions instead of failing on the first busy moment
-            - Old installs migrate to the new adaptive settings automatically
+            - The AI can now generate **JavaScript code events** (`BuiltinCommonInstructions::JsCode`) when logic can't be expressed with standard events — with the exact serialization format documented in its guide.
+            - The AI also knows the full **Dialogue Tree action/condition/expression list** (load Yarn JSON, start branch, next line, options…) so it can build dialogue systems for you.
 
             ### Setup (BYOK — bring your own keys)
 
@@ -222,7 +224,7 @@ jobs:
             3. Press **Test**. If Z.ai's free servers are momentarily busy, you'll see the automatic retry instead of an error.
           draft: false
           prerelease: false
-          files: release/Horizons-v0.2.4.apk
+          files: release/Horizons-v0.2.5.apk
           fail_on_unmatched_files: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

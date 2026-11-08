@@ -227,11 +227,11 @@ self.addEventListener('fetch', event => {
 self.addEventListener('install', event => {
   console.log('[ServiceWorker] Installing new service worker...');
 
-  // Pre-cache the Workbox runtime itself (loaded from a CDN below), so that
-  // the service worker keeps working fully offline even if the CDN is
-  // unreachable. Also bootstrap the app shell index.html.
-  const workboxUrl =
-    'https://storage.googleapis.com/workbox-cdn/releases/3.5.0/workbox-sw.js';
+  // Pre-cache the Workbox runtime — now served locally by the app itself
+  // (public/external/workbox/3.5.0) so the service worker installs and runs
+  // FULLY OFFLINE, including inside the Android APK. Also bootstrap the app
+  // shell index.html.
+  const workboxUrl = 'external/workbox/3.5.0/workbox-sw.js';
   event.waitUntil(
     caches
       .open('workbox-cdn-cache')
@@ -266,14 +266,35 @@ self.addEventListener('activate', event => {
 
 self.__WB_DISABLE_DEV_LOGS = true;
 
-// eslint-disable-next-line no-undef
-importScripts(
-  'https://storage.googleapis.com/workbox-cdn/releases/3.5.0/workbox-sw.js'
-);
+// Horizons: workbox is bundled with the app (public/external/workbox) so the
+// service worker NEVER depends on a CDN. A failure to load it must not kill
+// the SW: the /browser_sw_preview/ handler above still works without it.
+try {
+  // eslint-disable-next-line no-undef
+  importScripts('external/workbox/3.5.0/workbox-sw.js');
+} catch (error) {
+  console.warn(
+    '[ServiceWorker] Could not load the bundled workbox runtime:',
+    error
+  );
+}
 
 /* global workbox */
-if (workbox) {
+if (typeof workbox !== 'undefined') {
   console.log('[ServiceWorker] Workbox loaded successfully');
+
+  // IMPORTANT: Capacitor serves the app from "https://localhost", and the
+  // workbox loader defaults to "dev" builds when the hostname is literally
+  // "localhost". Force the production builds and make every module load
+  // from the local folder (relative to this service worker).
+  try {
+    workbox.setConfig({
+      debug: false,
+      modulePathPrefix: 'external/workbox/3.5.0/',
+    });
+  } catch (ignored) {
+    // Config was already set (another SW instance in the same scope).
+  }
 
   // Will be replaced by make-service-worker.js to include the proper version.
   const VersionMetadata = {};
@@ -362,6 +383,6 @@ if (workbox) {
   );
 } else {
   console.log(
-    '[ServiceWorker] Workbox could not be loaded - no offline support'
+    '[ServiceWorker] Workbox could not be loaded - previews are still served from IndexedDB.'
   );
 }

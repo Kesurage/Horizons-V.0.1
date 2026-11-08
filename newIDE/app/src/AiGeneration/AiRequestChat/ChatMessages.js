@@ -136,6 +136,48 @@ type MessageFeedbackButtonsProps = {|
   textToCopy?: string,
 |};
 
+/** Small chip showing which team AI produced an answer ("via GLM 4.7 Flash…"). */
+const ProviderBadge = ({
+  providerLabel,
+  model,
+}: {|
+  providerLabel: ?string,
+  model: ?string,
+|}): React.Node => {
+  if (!providerLabel) return null;
+  return (
+    <div
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 4,
+        marginBottom: 4,
+        padding: '1px 7px',
+        borderRadius: 999,
+        alignSelf: 'flex-start',
+        fontSize: 10,
+        lineHeight: 1.6,
+        color: 'rgba(255,255,255,0.55)',
+        background: 'rgba(255,255,255,0.06)',
+        border: '1px solid rgba(255,255,255,0.12)',
+      }}
+      title={model || undefined}
+    >
+      <span
+        style={{
+          width: 6,
+          height: 6,
+          borderRadius: 999,
+          background: '#69f0ae',
+          display: 'inline-block',
+        }}
+      />
+      via {providerLabel}
+      {model ? <span style={{ opacity: 0.6 }}>· {model}</span> : null}
+    </div>
+  );
+};
+
 const MessageFeedbackButtons = ({
   currentFeedback,
   onLike,
@@ -1092,6 +1134,30 @@ export const ChatMessages: React.ComponentType<Props> = React.memo<Props>(
                             )}
                           </FunctionCallsGroup>
                         )}
+                        {// $FlowFixMe[incompatible-use]
+                        (() => {
+                          const sourceMessage =
+                            aiRequest.output && aiRequest.output[messageIndex];
+                          if (
+                            !sourceMessage ||
+                            sourceMessage.type !== 'message' ||
+                            sourceMessage.role !== 'assistant'
+                          ) {
+                            return null;
+                          }
+                          return (
+                            <ProviderBadge
+                              providerLabel={
+                                // $FlowFixMe[incompatible-use]
+                                sourceMessage.providerLabel
+                              }
+                              model={
+                                // $FlowFixMe[incompatible-use]
+                                sourceMessage.model
+                              }
+                            />
+                          );
+                        })()}
                         <ChatMarkdownText source={trimmedText} />
                       </Column>
                     </ChatBubble>
