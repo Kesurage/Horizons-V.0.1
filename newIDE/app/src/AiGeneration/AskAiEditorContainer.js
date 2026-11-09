@@ -12,6 +12,8 @@ import {
 } from '../MainFrame/EditorContainers/BaseEditor';
 import { type ObjectWithContext } from '../ObjectsList/EnumerateObjects';
 import Paper from '../UI/Paper';
+import { Trans } from '@lingui/macro';
+import { AgentBridgePanel } from '../AgentBridge';
 import { AiRequestChat, type AiRequestChatInterface } from './AiRequestChat';
 import {
   addMessageToAiRequest,
@@ -1301,61 +1303,27 @@ export const AskAiEditor: React.ComponentType<Props> = React.memo<Props>(
         <>
           <Paper square background="dark" style={styles.paper}>
             <div style={styles.chatContainer}>
-              <AiRequestChat
-                aiConfigurationPresetsWithAvailability={getAiConfigurationPresetsWithAvailability(
-                  { limits, getAiSettings }
-                )}
-                project={project}
-                fileMetadata={fileMetadata}
-                ref={aiRequestChatRef}
-                aiRequest={selectedAiRequest}
-                onStartNewAiRequest={startNewAiRequest}
-                onSendUserMessage={({
-                  userMessage,
-                  mode,
-                }: {|
-                  userMessage: string,
-                  mode: 'chat' | 'agent' | 'orchestrator',
-                |}) =>
-                  onSendMessage({
-                    userMessage,
-                    mode,
-                    editorFunctionCallResults: selectedAiRequest
-                      ? getEditorFunctionCallResults(selectedAiRequest.id) || []
-                      : [],
-                  })
-                }
-                isSending={isSendingAiRequest(selectedAiRequestId)}
-                isSendingUserMessage={isSendingUserMessage}
-                lastSendError={getLastSendError(selectedAiRequestId)}
-                quota={quota}
-                increaseQuotaOffering={
-                  !hasValidSubscriptionPlan(subscription)
-                    ? 'subscribe'
-                    : canUpgradeSubscription(subscription)
-                    ? 'upgrade'
-                    : 'none'
-                }
-                onProcessFunctionCalls={onProcessFunctionCalls}
-                editorFunctionCallResults={
-                  (selectedAiRequest &&
-                    getEditorFunctionCallResults(selectedAiRequest.id)) ||
-                  null
-                }
-                price={aiRequestPrice}
-                availableCredits={availableCredits}
-                isRefreshingLimits={isRefreshingLimits}
-                onSendFeedback={onSendFeedback}
-                hasOpenedProject={!!project}
-                onStop={onStop}
-                i18n={i18n}
-                editorCallbacks={editorCallbacks}
-                onStartOrOpenChat={onStartOrOpenChat}
-                isFetchingSuggestions={isFetchingSuggestions}
-                savingProjectForMessageId={savingProjectForMessageId}
-                forkingState={forkingState}
-                onRestore={onRestore}
-              />
+              {/* V0.3.1: the built-in AI chat was removed — the Agent
+                  Bridge is the app's single AI surface. An external agent
+                  (with its own intelligence, no API key needed here) drives
+                  the editor through the relay connection. */}
+              <AgentBridgePanel />
+              <div
+                style={{
+                  padding: '24px 16px',
+                  textAlign: 'center',
+                  fontSize: 12,
+                  lineHeight: 1.7,
+                  color: 'rgba(255,255,255,0.55)',
+                }}
+              >
+                <Trans>
+                  Press Start Bridge above, copy the agent briefing and paste
+                  it into a chat with any AI. The agent can then read your
+                  project, build scenes, write events and save — live, while
+                  you watch. No API key, works on mobile data.
+                </Trans>
+              </div>
             </div>
           </Paper>
           <AskAiHistory

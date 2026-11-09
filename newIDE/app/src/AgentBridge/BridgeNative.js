@@ -19,8 +19,8 @@ export type NativeBridgePlugin = {
     body: string,
   }) => Promise<any>,
   getState: () => Promise<any>,
-  startTunnel: (options: { server?: string, subdomain?: string }) => Promise<any>,
-  stopTunnel: () => Promise<any>,
+  startRelay: (options?: {}) => Promise<any>,
+  stopRelay: () => Promise<any>,
   addListener: (
     eventName: string,
     callback: (data: any) => void

@@ -1,20 +1,22 @@
 // @flow
 /**
  * Singleton managing the Agent Bridge lifecycle:
- *  - starts/stops the native HTTP server plugin,
- *  - receives every forwarded HTTP request (event "bridgeRequest"),
- *    routes it through the BridgeApi and sends the answer back,
- *  - tracks status (URLs, token, tunnel) for the UI panel.
+ *  - starts/stops the native bridge (outbound relay connection + best-effort
+ *    local server for LAN access),
+ *  - receives every forwarded request (event "bridgeRequest"), routes it
+ *    through the BridgeApi and sends the answer back,
+ *  - tracks relay status (broker, topic, online state) for the UI panel.
  */
 import { getBridgePlugin } from './BridgeNative';
 import { handleBridgeRequest, setAgentBridgeContext } from './BridgeApi';
 import { pushBridgeLog } from './BridgeLogs';
 
-export type BridgeTunnelState = {
+export type BridgeRelayState = {
   active: boolean,
-  url: string,
-  subdomain: string,
-  server: string,
+  connecting: boolean,
+  broker: string,
+  topic: string,
+  lastError: string,
   lastEvent: string,
 };
 
@@ -26,9 +28,10 @@ export type BridgeStatus = {
   port: number,
   token: string,
   urls: Array<string>,
+  localServerError: string,
   startedAt: number,
   requestsServed: number,
-  tunnel: BridgeTunnelState,
+  relay: BridgeRelayState,
 };
 
 const status: BridgeStatus = {
@@ -39,13 +42,15 @@ const status: BridgeStatus = {
   port: 0,
   token: '',
   urls: [],
+  localServerError: '',
   startedAt: 0,
   requestsServed: 0,
-  tunnel: {
+  relay: {
     active: false,
-    url: '',
-    subdomain: '',
-    server: '',
+    connecting: false,
+    broker: '',
+    topic: '',
+    lastError: '',
     lastEvent: '',
   },
 };
@@ -58,7 +63,7 @@ let listenersRegistered = false;
 const notifyStatus = () => {
   for (const listener of statusListeners) {
     try {
-      listener({ ...status, tunnel: { ...status.tunnel } });
+      listener({ ...status, relay: { ...status.relay } });
     } catch (ignored) {
       // A broken listener must not break the bridge.
     }
@@ -69,7 +74,7 @@ export const subscribeToBridgeStatus = (
   listener: StatusListener
 ): (() => void) => {
   statusListeners.add(listener);
-  listener({ ...status, tunnel: { ...status.tunnel } });
+  listener({ ...status, relay: { ...status.relay } });
   return () => {
     statusListeners.delete(listener);
   };
@@ -81,18 +86,26 @@ const applyNativeState = (nativeState: any) => {
   status.port = nativeState.port || 0;
   status.token = nativeState.token || '';
   status.urls = Array.isArray(nativeState.urls) ? nativeState.urls : [];
+  status.localServerError = nativeState.localServerError || '';
   status.startedAt = nativeState.startedAt || 0;
   status.requestsServed = nativeState.requestsServed || 0;
-  if (nativeState.tunnel) {
-    status.tunnel = {
-      active: !!nativeState.tunnel.active,
-      url: nativeState.tunnel.url || '',
-      subdomain: nativeState.tunnel.subdomain || '',
-      server: nativeState.tunnel.server || '',
-      lastEvent: status.tunnel.lastEvent,
+  if (nativeState.relay) {
+    status.relay = {
+      active: !!nativeState.relay.active,
+      connecting: !!nativeState.relay.connecting,
+      broker: nativeState.relay.broker || '',
+      topic: nativeState.relay.topic || '',
+      lastError: nativeState.relay.lastError || '',
+      lastEvent: status.relay.lastEvent,
     };
   }
   notifyStatus();
+};
+
+const brokerHost = (broker: string): string => {
+  if (!broker) return '';
+  const noScheme = String(broker).replace(/^wss?:\/\//, '');
+  return noScheme.split('/')[0];
 };
 
 const ensureListeners = () => {
@@ -132,23 +145,38 @@ const ensureListeners = () => {
     }
   });
 
-  plugin.addListener('tunnelEvent', (event: any) => {
+  plugin.addListener('relayEvent', (event: any) => {
     if (!event) return;
     const phase = event.phase || '';
-    status.tunnel.lastEvent = event.message || phase;
-    if (phase === 'registered' && event.url) {
-      status.tunnel.active = true;
-      status.tunnel.url = event.url;
-      pushBridgeLog('info', `Public tunnel: ${event.url}`);
+    status.relay.lastEvent = event.message || phase;
+    if (phase === 'online') {
+      status.relay.active = true;
+      status.relay.connecting = false;
+      status.relay.broker = event.broker || status.relay.broker;
+      status.relay.topic = event.topic || status.relay.topic;
+      status.relay.lastError = '';
+      pushBridgeLog(
+        'info',
+        `Relay online via ${brokerHost(status.relay.broker)} — agents can connect on ${status.relay.topic}`
+      );
+    } else if (phase === 'offline') {
+      status.relay.active = false;
+      status.relay.connecting = true;
+      pushBridgeLog('info', 'Relay connection lost — reconnecting…');
     } else if (phase === 'error') {
-      status.tunnel.active = false;
-      pushBridgeLog('error', 'Public tunnel failed', event.message || '');
+      status.relay.active = false;
+      status.relay.connecting = false;
+      status.relay.lastError = event.message || 'Relay error';
+      pushBridgeLog('error', 'Relay failed', status.relay.lastError);
     } else if (phase === 'closed') {
-      status.tunnel.active = false;
-      status.tunnel.url = '';
-      pushBridgeLog('info', 'Public tunnel closed');
-    } else if (phase === 'registering') {
-      pushBridgeLog('info', event.message || 'Registering public tunnel…');
+      status.relay.active = false;
+      status.relay.connecting = false;
+      pushBridgeLog('info', 'Relay closed');
+    } else if (phase === 'connecting') {
+      status.relay.connecting = true;
+      pushBridgeLog('info', event.message || 'Connecting to the relay…');
+    } else if (phase === 'warning') {
+      pushBridgeLog('error', 'Relay warning', event.message || '');
     }
     notifyStatus();
   });
@@ -195,11 +223,18 @@ export const startBridge = async (): Promise<boolean> => {
       return false;
     }
     applyNativeState(result);
+    if (status.localServerError) {
+      // Not fatal at all: the relay works on any network, the local server
+      // is only a bonus for devices on the same Wi-Fi.
+      pushBridgeLog(
+        'error',
+        'Local server (same Wi-Fi access) failed to start',
+        `${status.localServerError} — the relay still works everywhere.`
+      );
+    }
     pushBridgeLog(
       'info',
-      `Bridge listening on port ${status.port}${
-        status.urls.length ? ' — ' + status.urls.join(', ') : ''
-      }`
+      'Bridge session started — connecting the relay (broker.emqx.io)…'
     );
     notifyStatus();
     return true;
@@ -226,38 +261,16 @@ export const stopBridge = async () => {
   status.running = false;
   status.urls = [];
   status.port = 0;
+  status.localServerError = '';
+  status.relay = {
+    active: false,
+    connecting: false,
+    broker: '',
+    topic: '',
+    lastError: '',
+    lastEvent: '',
+  };
   pushBridgeLog('info', 'Bridge stopped.');
-  notifyStatus();
-};
-
-export const startBridgeTunnel = async (): Promise<boolean> => {
-  const plugin = getBridgePlugin();
-  if (!plugin || !status.running) return false;
-  try {
-    const result = await plugin.startTunnel({});
-    if (result && result.ok === false) {
-      pushBridgeLog('error', 'Public tunnel failed', result.error || '');
-      return false;
-    }
-    // The tunnelEvent listener reports registration + URL.
-    pushBridgeLog('info', 'Requesting a public URL…');
-    return true;
-  } catch (error) {
-    pushBridgeLog('error', 'Public tunnel failed', String(error));
-    return false;
-  }
-};
-
-export const stopBridgeTunnel = async () => {
-  const plugin = getBridgePlugin();
-  if (!plugin) return;
-  try {
-    await plugin.stopTunnel();
-  } catch (ignored) {
-    // Ignore.
-  }
-  status.tunnel.active = false;
-  status.tunnel.url = '';
   notifyStatus();
 };
 

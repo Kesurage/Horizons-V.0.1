@@ -6,7 +6,7 @@
  * project contains, which endpoints exist and the recommended workflow.
  */
 
-const APP_VERSION = '0.3.0';
+const APP_VERSION = '0.3.1';
 
 export const buildManifest = (project: any | null, query: URLSearchParams) => {
   const scenes: Array<string> = [];
@@ -71,19 +71,30 @@ export const buildAgentGuide = (project: any | null): string => {
 
 You are connected to **Horizons** (a GDevelop fork running on the user's Android
 device). You have full, authenticated access to the game editor via this REST
-API. Every request needs the bridge token (the user gave it to you — it is
-already validated since you can read this).
+API — reached over the relay (MQTT over WebSocket). Every request needs the
+bridge token (the user gave it to you — it is already validated since you can
+read this).
 
 Current project: **${projectName}**
 
 ## How to call
 
-    curl -s -H "Authorization: Bearer $TOKEN" "$BASE_URL/<endpoint>"
-    curl -s -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
-         -d '{"events":[...]}' "$BASE_URL/scenes/<Scene>/events"
+Every request is one MQTT command published on  <topic>/cmd ; its answer
+arrives on  <topic>/evt  (the topic and token were in the briefing the user
+gave you; broker: wss://broker.emqx.io:8084/mqtt, fallback
+wss://broker.hivemq.com:8884/mqtt — TLS, QoS 1):
 
-(\`$BASE_URL\` is the URL you were given; \`$TOKEN\` the token. The \`?token=\`
-query parameter also works.)
+    {"id":"r1","token":"$TOKEN","method":"GET","path":"/project/digest","query":"","body":""}
+
+    answer on <topic>/evt:
+    {"id":"r1","status":200,"body":"{...json...}"}
+
+method, path and query work like HTTP; body carries the request body as a
+string (JSON for writes). id correlates the answer — use a fresh id per
+request and subscribe to <topic>/evt BEFORE publishing. <topic>/status
+(retained) tells you whether the app is still online. If no answer comes
+within ~60s the app may be backgrounded — ask the user to reopen it, then
+retry with a NEW id.
 
 ## Recommended workflow
 
@@ -169,9 +180,8 @@ call the notify helpers so the UI refreshes.
 - Save with POST /save when a unit of work is done (the first save may need
   the user to pick a location — a dialog appears on their screen).
 - Long requests cap at ~180s; keep /eval snippets short.
-- Public-URL mode (a *.loca.lt address) may show a one-time password page for
-  datacenter visitors: if a request answers 40x with an HTML form, fetch your
-  own public IP (e.g. https://api.ipify.org), submit it as the form's
-  tunnel_password field with the same cookie jar, then retry.
+- Keep individual requests under ~500KB — public relay brokers cap message
+  size (the app answers with a clear error if a response would be too big;
+  narrow the request, e.g. read one scene instead of the full project).
 `;
 };

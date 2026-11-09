@@ -142,7 +142,11 @@ jobs:
             android/app/src/main/java/com/kesurage/horizons/MainActivity.java
           # NanoHTTPD (BSD licensed, tiny) powers the embedded bridge server.
           sed -i "/implementation project(':capacitor-android')/a\\    implementation \"org.nanohttpd:nanohttpd:2.3.1\"" android/app/build.gradle
-          grep -n "nanohttpd" android/app/build.gradle
+          # Paho Java client powers the relay (MQTT over WebSocket + TLS):
+          # the app connects OUT to a public broker so an external AI agent
+          # can drive it without any inbound tunnel (localtunnel is dead).
+          sed -i "/implementation project(':capacitor-android')/a\\    implementation \"org.eclipse.paho:org.eclipse.paho.client.mqttv3:1.2.5\"" android/app/build.gradle
+          grep -n "nanohttpd\|paho" android/app/build.gradle
           grep -n "BridgeServerPlugin" android/app/src/main/java/com/kesurage/horizons/MainActivity.java
           # Make the soft keyboard RESIZE the WebView instead of covering it,
           # so inputs in embedded editors (Yarn dialogue editor, preview
@@ -193,58 +197,45 @@ jobs:
       - name: Rename APK
         run: |
           mkdir -p release
-          cp capacitor-app/android/app/build/outputs/apk/release/app-release.apk release/Horizons-v0.3.0.apk
+          cp capacitor-app/android/app/build/outputs/apk/release/app-release.apk release/Horizons-v0.3.1.apk
           ls -la release/
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: horizons-apk
-          path: release/Horizons-v0.3.0.apk
+          path: release/Horizons-v0.3.1.apk
           retention-days: 30
 
       - name: Publish to GitHub Releases
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.3.0
-          name: 'Horizons V.0.3.0 — the Agent Bridge: any AI can now drive the app itself'
+          tag_name: v0.3.1
+          name: 'Horizons V.0.3.1 — the bridge works on mobile data (relay, no tunnel); built-in AI removed'
           body: |
-            ## Horizons V.0.3.0 APK
+            ## Horizons V.0.3.1 APK
 
-            Install: download `Horizons-v0.3.0.apk` on your Android device and open it (allow "install from unknown sources").
+            Install: download `Horizons-v0.3.1.apk` on your Android device and open it (allow "install from unknown sources"). Install it over the old version — your projects are kept.
 
-            ### The Agent Bridge — no more API keys, no more free-tier limits
+            ### Fixed: the bridge now works on mobile data (no more tunnel)
 
-            The built-in AI needed paid/free-tier API keys and ran out of requests. The Agent Bridge removes the middleman entirely:
+            V0.3.0's "public URL" used the free localtunnel service — which is now dead (it refuses new tunnels with 403), so the tunnel and everything behind it failed on the phone. V0.3.1 replaces it with a **relay**:
 
-            1. Open the **AI panel** and press **Start Bridge**.
-            2. The app creates a local server on your device **with its own access token** (like a modern GitHub token, generated automatically).
-            3. Give the URL + token to **any AI agent** — for example in another chat. The agent can then read your whole project (scenes, objects, events, variables), write events, objects and extensions, save the project, and see everything it did in a live log — while you keep the app open and watch.
+            - The app connects OUT to a public MQTT-over-WebSocket broker (broker.emqx.io, fallback broker.hivemq.com — no account, no key). Outbound connections like this work on any mobile network and Wi-Fi, exactly like the app's own web requests.
+            - The AI agent connects to the same relay and drives the app with your token: press **Start Bridge**, then **Copy agent briefing**, and paste it into any AI chat.
+            - Automatic reconnect (with fallback broker) and an online/offline status are built in — the agent always knows if the app is reachable.
+            - The same-Wi-Fi (LAN) access still works as a bonus, and a failed local server no longer breaks anything — the relay is the primary path.
 
-            This is the "remote BYOK agent": the intelligence lives on the agent side (which already has its own AI), the app just exposes its workflow over a token-protected API. **Zero API keys needed in the app.**
+            ### Removed: the built-in AI chat
 
-            ### What the agent can do through the bridge
+            The built-in multi-AI chat (GLM + Gemini, bring-your-own-key, free-tier limits) was removed. The Agent Bridge is now the app's single AI surface: the intelligence lives in whatever AI you connect to it — no keys in the app, no request limits.
 
-            - Browse the project: scenes, objects, variables, layers, resources, extensions — as compact digests or full JSON.
-            - Read any scene's events as readable text or raw JSON.
-            - Write events with the same validated pipeline the built-in AI uses (unknown instructions get diagnostics with the closest real one).
-            - Create/replace objects, create scenes, install extensions from JSON.
-            - Save the project (to your device storage), open a scene in the editor, post progress notes.
-            - Run small snippets with full editor access for anything else (the `/eval` escape hatch).
-            - Every change is backed up — `POST /revert` rolls back a bad batch.
+            ### For AI agents
 
-            ### Two access modes
-
-            - **LAN (default, always works):** any device on the same Wi-Fi (or `adb reverse tcp:8090 tcp:8090` from your PC) can reach the bridge.
-            - **Public URL (experimental button):** the app connects to the free localtunnel service (no account, no key) so a cloud agent can reach your phone from anywhere. If the free tunnel service is busy, LAN still works.
-
-            ### Also in this release
-
-            - The built-in multi-AI chat (GLM + Gemini, BYOK) is still there for offline use — but it is no longer the only way: the bridge needs no keys at all.
-            - Keep-screen-on while the bridge runs, so long agent sessions don't get interrupted.
+            The bridge API (browse scenes/objects/events, write events, create objects/extensions, save, revert, /eval) is unchanged; only the transport changed. `GET /` on the bridge returns the full self-serve guide, and `docs/AGENT_BRIDGE.md` documents the relay protocol.
           draft: false
           prerelease: false
-          files: release/Horizons-v0.3.0.apk
+          files: release/Horizons-v0.3.1.apk
           fail_on_unmatched_files: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

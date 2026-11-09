@@ -278,7 +278,7 @@ export const buildMainMenuDeclarativeTemplate = ({
         ? []
         : [
             {
-              label: i18n._(t`Ask AI (AI agent and chatbot)`),
+              label: i18n._(t`Agent Bridge (connect an external AI)`),
               onClickSendEvent: 'main-menu-open-ask-ai',
             },
           ]),

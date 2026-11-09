@@ -14,8 +14,8 @@ android {
         applicationId "app.horizons.editor"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 3
-        versionName "0.3.0"
+        versionCode 4
+        versionName "0.3.1"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -57,6 +57,10 @@ dependencies {
     // AI agents (token protected). NanoHTTPD is a tiny open source (BSD)
     // server that ships as a single small jar from Maven Central.
     implementation "org.nanohttpd:nanohttpd:2.3.1"
+    // Relay (MQTT over WebSocket + TLS): outbound-only connection to a
+    // public broker so external AI agents can drive the app without any
+    // inbound tunnel (localtunnel is dead).
+    implementation "org.eclipse.paho:org.eclipse.paho.client.mqttv3:1.2.5"
     testImplementation "junit:junit:$junitVersion"
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
     androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"

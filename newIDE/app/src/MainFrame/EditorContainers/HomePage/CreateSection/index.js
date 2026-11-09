@@ -54,7 +54,6 @@ import { useProjectsListFor } from './utils';
 import { deleteCloudProject } from '../../../../Utils/GDevelopServices/Project';
 import { getDefaultRegisterGameProperties } from '../../../../Utils/UseGameAndBuildsManager';
 import { type CreateProjectResult } from '../../../../Utils/UseCreateProject';
-import { AskAiStandAloneForm } from '../../../../AiGeneration/AskAiStandAloneForm';
 import { AiRequestContext } from '../../../../AiGeneration/AiRequestContext';
 
 const getExampleItemsColumns = (
@@ -497,20 +496,9 @@ const CreateSection = ({
           showUrgentAnnouncements
         >
           <SectionRow expand>
-            <AskAiStandAloneForm
-              i18n={i18n}
-              project={project}
-              resourceManagementProps={resourceManagementProps}
-              fileMetadata={currentFileMetadata}
-              storageProvider={storageProvider}
-              onCreateProjectFromExample={onCreateProjectFromExample}
-              onCreateEmptyProject={onCreateEmptyProject}
-              onOpenLayout={onOpenLayout}
-              onWillInstallExtension={onWillInstallExtension}
-              onExtensionInstalled={onExtensionInstalled}
-              onCloseAskAi={onCloseAskAi}
-              dismissableIdentifier="home-page-create-section"
-            />
+            {/* V0.3.1: the "Ask AI to create a game" form was removed —
+                the Agent Bridge (menu: Help → Agent Bridge) is the app's
+                single AI surface now. */}
             <ColumnStackLayout noMargin>
               {hidePerformanceDashboard ? null : hasAProjectOpenedNowOrRecentlyOrGameSaved ? (
                 <ColumnStackLayout noMargin>

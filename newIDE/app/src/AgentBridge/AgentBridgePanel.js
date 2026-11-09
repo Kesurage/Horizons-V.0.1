@@ -6,8 +6,6 @@ import {
   refreshBridgeStatus,
   startBridge,
   stopBridge,
-  startBridgeTunnel,
-  stopBridgeTunnel,
   type BridgeStatus,
 } from './AgentBridgeServer';
 import {
@@ -18,12 +16,13 @@ import {
 } from './BridgeLogs';
 
 /**
- * The AGENT BRIDGE panel, at the top of the AI panel.
+ * The AGENT BRIDGE panel — the app's single AI surface.
  *
- * Press Start → the app hosts a token-protected server on the device.
- * An external AI agent (with its own intelligence, no API key needed in
- * the app) can then drive the whole editor: browse the project, write
- * events/objects/extensions, save — with everything logged live below.
+ * Press Start → the app connects OUT to a public relay (MQTT over WebSocket,
+ * no account, works on mobile data) and exposes a token-protected API.
+ * An external AI agent — with its own intelligence, no API key needed in
+ * the app — can then drive the whole editor: browse the project, write
+ * events/objects/extensions, save — everything logged live below.
  */
 
 const MAX_FEED_ENTRIES = 60;
@@ -82,6 +81,31 @@ const monoStyle: Object = {
   wordBreak: 'break-all',
 };
 
+const labelStyle: Object = {
+  fontSize: 11,
+  color: 'rgba(255,255,255,0.45)',
+  flexShrink: 0,
+};
+
+const rowStyle: Object = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 6,
+  flexWrap: 'wrap',
+  marginTop: 4,
+};
+
+const RELAY_BROKERS = [
+  'wss://broker.emqx.io:8084/mqtt',
+  'wss://broker.hivemq.com:8884/mqtt',
+];
+
+const brokerHost = (broker: ?string): string => {
+  if (!broker) return '';
+  const noScheme = String(broker).replace(/^wss?:\/\//, '');
+  return noScheme.split('/')[0];
+};
+
 const AgentBridgePanel = (): React.Node => {
   const [expanded, setExpanded] = React.useState(() => {
     try {
@@ -114,7 +138,7 @@ const AgentBridgePanel = (): React.Node => {
 
   const flashMessage = (message: string) => {
     setFlash(message);
-    setTimeout(() => setFlash(''), 1800);
+    setTimeout(() => setFlash(''), 2500);
   };
 
   const toggleExpanded = () => {
@@ -134,12 +158,11 @@ const AgentBridgePanel = (): React.Node => {
 
   const running = !!(status && status.running);
   const supported = !status || status.supported !== false;
-  const publicUrl = status && status.tunnel.active ? status.tunnel.url : '';
-  const primaryUrl =
-    publicUrl ||
-    (status && status.urls.length
-      ? status.urls[0]
-      : '');
+  const relay = status ? status.relay : null;
+  const relayOnline = !!(relay && relay.active);
+  const relayConnecting = !!(relay && relay.connecting);
+  const relayHost = brokerHost(relay ? relay.broker : '');
+  const relayTopic = relay && relay.topic ? relay.topic : '';
 
   const maskToken = (token: string) =>
     token.length > 12
@@ -148,20 +171,33 @@ const AgentBridgePanel = (): React.Node => {
 
   const buildBriefing = (): string => {
     if (!status) return '';
-    const url = publicUrl || (status.urls[0] || '');
+    const topic = relayTopic || 'hz/?';
     return [
-      'Horizons Agent Bridge — connect an AI agent to my game editor:',
+      'Horizons Agent Bridge — connect an AI agent to my game editor (v0.3.1):',
       '',
-      `URL: ${url}`,
-      `Token: ${status.token}`,
+      'Relay (works on mobile data, no account, no API key):',
+      `  broker: ${RELAY_BROKERS[0]}`,
+      `  fallback broker: ${RELAY_BROKERS[1]}`,
+      `  topic: ${topic}`,
+      `  token: ${status.token}`,
       '',
-      'The agent should start by fetching (with curl or WebFetch):',
-      `curl -H "Authorization: Bearer ${status.token}" "${url}/"`,
+      'Protocol (MQTT over WebSocket + TLS, QoS 1):',
+      `  1. subscribe to  ${topic}/evt  and  ${topic}/status`,
+      `  2. publish commands to  ${topic}/cmd  as JSON:`,
+      `     {"id":"<any-id>","token":"${status.token}","method":"GET","path":"/","query":"","body":""}`,
+      `  3. the answer arrives on  ${topic}/evt :`,
+      '     {"id":"<same-id>","status":200,"body":"<json>"}',
       '',
-      'That returns the manifest + a complete guide (endpoints, event formats,',
-      'the recommended workflow, safety nets). Then it can browse and edit the',
-      'project live and save it. Keep the app open while it works.',
-    ].join('\n');
+      'Start with GET / — it returns the full manifest and a complete',
+      'self-serve guide (endpoints, event JSON format, workflow, safety nets).',
+      'Then browse and edit the project live and save it. Keep the app open',
+      'while the agent works.',
+      status.urls.length
+        ? `(On the same Wi-Fi, ${status.urls[0]} with the same token also works.)`
+        : '',
+    ]
+      .filter(line => line !== '')
+      .join('\n');
   };
 
   const onStart = async () => {
@@ -174,8 +210,10 @@ const AgentBridgePanel = (): React.Node => {
   };
 
   const headerColor = running
-    ? publicUrl
+    ? relayOnline
       ? '#69f0ae'
+      : relayConnecting
+      ? '#ffa726'
       : '#4caf50'
     : status && status.supported === false
     ? '#78909c'
@@ -184,8 +222,10 @@ const AgentBridgePanel = (): React.Node => {
   const headerText = !supported
     ? 'Android app only'
     : running
-    ? publicUrl
-      ? publicUrl
+    ? relayOnline
+      ? `Relay: ${relayHost || 'online'}`
+      : relayConnecting
+      ? 'Connecting to relay…'
       : status && status.urls.length
       ? status.urls[0].replace(/^https?:\/\//, '')
       : `port ${status ? status.port : ''}`
@@ -218,7 +258,12 @@ const AgentBridgePanel = (): React.Node => {
         >
           <Trans>Agent Bridge</Trans>
         </span>
-        <span style={dotStyle(headerColor, !!(status && status.starting))} />
+        <span
+          style={dotStyle(
+            headerColor,
+            !!(status && (status.starting || (running && relayConnecting)))
+          )}
+        />
         <span
           style={{
             fontSize: 11,
@@ -248,8 +293,9 @@ const AgentBridgePanel = (): React.Node => {
           {!supported && (
             <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)' }}>
               <Trans>
-                The bridge needs the Android app (it hosts a real server on
-                the device). In a desktop browser there is nothing to host.
+                The bridge needs the Android app (it connects to the relay
+                from the device). In a desktop browser there is nothing to
+                host.
               </Trans>
             </div>
           )}
@@ -265,11 +311,11 @@ const AgentBridgePanel = (): React.Node => {
                 }}
               >
                 <Trans>
-                  Press Start to turn this app into a token-protected server.
-                  An external AI agent (no API key needed!) can then browse
-                  your project, write events, objects and extensions, and
-                  save — everything appears in the log below. You stay in
-                  control: every change can be reverted.
+                  Press Start and give any AI agent the briefing — it can then
+                  browse your project, write events, objects and extensions,
+                  and save. Works on mobile data and Wi-Fi, no account, no API
+                  key. Everything appears in the log below, and every change
+                  can be reverted.
                 </Trans>
               </div>
               <button
@@ -284,43 +330,41 @@ const AgentBridgePanel = (): React.Node => {
 
           {running && status && (
             <div>
-              {/* Access point + token */}
-              <div
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 6,
-                  flexWrap: 'wrap',
-                  marginTop: 2,
-                }}
-              >
-                <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.45)' }}>
-                  <Trans>Access point</Trans>
+              {/* Relay status */}
+              <div style={rowStyle}>
+                <span style={labelStyle}>
+                  <Trans>Relay</Trans>
                 </span>
-                <span style={monoStyle}>{primaryUrl}</span>
-                {primaryUrl && (
-                  <button
-                    style={buttonStyle(false)}
-                    onClick={() => {
-                      copyToClipboard(primaryUrl).then(() =>
-                        flashMessage('URL copied')
-                      );
+                {relayOnline ? (
+                  <span style={monoStyle}>
+                    {relayHost || 'online'} · {relayTopic}
+                  </span>
+                ) : relayConnecting ? (
+                  <span
+                    style={{
+                      fontSize: 11,
+                      color: 'rgba(255,255,255,0.55)',
                     }}
                   >
-                    <Trans>Copy</Trans>
-                  </button>
+                    <Trans>connecting…</Trans>
+                  </span>
+                ) : (
+                  <span
+                    style={{
+                      fontSize: 11,
+                      color: '#ef9a9a',
+                    }}
+                  >
+                    {relay && relay.lastError
+                      ? relay.lastError
+                      : 'offline'}
+                  </span>
                 )}
               </div>
-              <div
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 6,
-                  flexWrap: 'wrap',
-                  marginTop: 4,
-                }}
-              >
-                <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.45)' }}>
+
+              {/* Token */}
+              <div style={rowStyle}>
+                <span style={labelStyle}>
                   <Trans>Token</Trans>
                 </span>
                 <span style={monoStyle}>
@@ -345,6 +389,26 @@ const AgentBridgePanel = (): React.Node => {
                   <Trans>Copy</Trans>
                 </button>
               </div>
+
+              {/* LAN access (bonus, when the local server could bind) */}
+              {status.urls.length > 0 && (
+                <div style={rowStyle}>
+                  <span style={labelStyle}>
+                    <Trans>Same Wi-Fi</Trans>
+                  </span>
+                  <span style={monoStyle}>{status.urls[0]}</span>
+                  <button
+                    style={buttonStyle(false)}
+                    onClick={() => {
+                      copyToClipboard(status.urls[0]).then(() =>
+                        flashMessage('LAN URL copied')
+                      );
+                    }}
+                  >
+                    <Trans>Copy</Trans>
+                  </button>
+                </div>
+              )}
 
               {/* One-click briefing for the agent chat */}
               <div style={{ marginTop: 8 }}>
@@ -372,103 +436,6 @@ const AgentBridgePanel = (): React.Node => {
                   >
                     {flash}
                   </span>
-                )}
-              </div>
-
-              {/* Public URL (tunnel) */}
-              <div
-                style={{
-                  marginTop: 10,
-                  padding: '6px 8px',
-                  borderRadius: 6,
-                  background: 'rgba(255,255,255,0.04)',
-                  border: '1px solid rgba(255,255,255,0.08)',
-                }}
-              >
-                <div
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 8,
-                    flexWrap: 'wrap',
-                  }}
-                >
-                  <span style={{ fontSize: 11, fontWeight: 600 }}>
-                    <Trans>Public URL</Trans>{' '}
-                    <span style={{ fontWeight: 400, color: 'rgba(255,255,255,0.4)' }}>
-                      (<Trans>experimental, no account</Trans>)
-                    </span>
-                  </span>
-                  <span style={{ flex: 1 }} />
-                  {status.tunnel.active ? (
-                    <button
-                      style={buttonStyle(false)}
-                      onClick={() => {
-                        stopBridgeTunnel();
-                      }}
-                    >
-                      <Trans>Turn off</Trans>
-                    </button>
-                  ) : (
-                    <button
-                      style={buttonStyle(false)}
-                      onClick={() => {
-                        startBridgeTunnel();
-                      }}
-                    >
-                      <Trans>Get public URL</Trans>
-                    </button>
-                  )}
-                </div>
-                {status.tunnel.active && status.tunnel.url && (
-                  <div
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 6,
-                      marginTop: 4,
-                      flexWrap: 'wrap',
-                    }}
-                  >
-                    <span style={monoStyle}>{status.tunnel.url}</span>
-                    <button
-                      style={buttonStyle(false)}
-                      onClick={() => {
-                        copyToClipboard(status.tunnel.url).then(() =>
-                          flashMessage('Public URL copied')
-                        );
-                      }}
-                    >
-                      <Trans>Copy</Trans>
-                    </button>
-                  </div>
-                )}
-                {!status.tunnel.active && status.tunnel.lastEvent && (
-                  <div
-                    style={{
-                      marginTop: 4,
-                      fontSize: 11,
-                      color: status.tunnel.lastEvent.includes('failed')
-                        ? '#ef9a9a'
-                        : 'rgba(255,255,255,0.5)',
-                    }}
-                  >
-                    {status.tunnel.lastEvent}
-                  </div>
-                )}
-                {!status.tunnel.active && !status.tunnel.lastEvent && (
-                  <div
-                    style={{
-                      marginTop: 4,
-                      fontSize: 11,
-                      color: 'rgba(255,255,255,0.5)',
-                    }}
-                  >
-                    <Trans>
-                      Same Wi-Fi (LAN) always works. A public URL lets a cloud
-                      agent reach the device from anywhere.
-                    </Trans>
-                  </div>
                 )}
               </div>
 
