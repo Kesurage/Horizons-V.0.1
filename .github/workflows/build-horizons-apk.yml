@@ -207,7 +207,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v0.3.0
-          name: Horizons V.0.3.0 — the Agent Bridge: any AI can now drive the app itself
+          name: 'Horizons V.0.3.0 — the Agent Bridge: any AI can now drive the app itself'
           body: |
             ## Horizons V.0.3.0 APK
 
