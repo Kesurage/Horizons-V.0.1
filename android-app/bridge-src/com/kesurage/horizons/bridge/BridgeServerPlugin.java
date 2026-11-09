@@ -624,8 +624,11 @@ public class BridgeServerPlugin extends Plugin {
                 } catch (Exception ignored) {
                     // Keep one socket.
                 }
+                final int tunnelSocketCount = socketCount;
                 String remoteHost = (ip != null && !ip.trim().isEmpty())
                         ? ip.trim() : new URL(serverBase).getHost();
+                final String tunnelRemoteHost = remoteHost;
+                final int tunnelRemotePort = remotePort;
 
                 active = true;
                 emitTunnelEvent("registered", publicUrl,
@@ -646,8 +649,8 @@ public class BridgeServerPlugin extends Plugin {
                             }
                             sockets.removeAll(dead);
                         }
-                        for (int i = live; i < socketCount && active; i++) {
-                            openTunnelSocket(remoteHost, remotePort);
+                        for (int i = live; i < tunnelSocketCount && active; i++) {
+                            openTunnelSocket(tunnelRemoteHost, tunnelRemotePort);
                             try {
                                 Thread.sleep(500);
                             } catch (InterruptedException e) {

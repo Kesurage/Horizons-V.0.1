@@ -1,12 +1,17 @@
 // @flow
 import * as React from 'react';
-import { setAgentBridgeContext } from './AgentBridgeServer';
+import { setAgentBridgeContext, refreshBridgeStatus } from './AgentBridgeServer';
 
 /**
  * Mounted once in the MainFrame render tree. Keeps the Agent Bridge API
  * context fresh: the current project, the save routine and the editor
  * refresh callbacks — so an external agent always works on the project
  * that is actually opened, and the UI reacts to its changes.
+ *
+ * It also re-syncs with the native server on mount: if the WebView was
+ * reloaded while the native bridge kept running (or the AI panel was
+ * never opened this session), the request listeners are re-registered
+ * here so agents do not hit timeouts.
  */
 type Props = {|
   project: any | null,
@@ -20,6 +25,12 @@ type Props = {|
 |};
 
 const AgentBridgeContextSync = (props: Props) => {
+  React.useEffect(() => {
+    // The native server (if running) outlives WebView reloads: make sure
+    // this fresh JS context takes over request handling immediately.
+    refreshBridgeStatus();
+  }, []);
+
   React.useEffect(() => {
     setAgentBridgeContext({
       project: props.project,
