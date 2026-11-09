@@ -66,6 +66,7 @@ import { renderHomePageContainer } from './EditorContainers/HomePage';
 import { type OpenAskAiOptions } from '../AiGeneration/Utils';
 import { exceptionallyGuardAgainstDeadObject } from '../Utils/IsNullPtr';
 import { renderAskAiEditorContainer } from '../AiGeneration/AskAiEditorContainer';
+import { AgentBridgeContextSync } from '../AgentBridge';
 import { renderResourcesEditorContainer } from './EditorContainers/ResourcesEditorContainer';
 import { renderGlobalEventsSearchEditorContainer } from './EditorContainers/GlobalEventsSearchEditorContainer';
 import {
@@ -5181,6 +5182,18 @@ const MainFrame = (props: Props): React.MixedElement => {
         enabled={gameEditorMode === 'embedded-game'}
         previewDebuggerServer={previewDebuggerServer || null}
         onLaunchPreviewForInGameEdition={onLaunchPreviewForInGameEdition}
+      />
+      {/* The Agent Bridge API works on the currently opened project: this
+          keeps it connected to the live project + the save/refresh routines. */}
+      <AgentBridgeContextSync
+        project={currentProject}
+        onSave={saveProject}
+        openLayout={openLayout}
+        onSceneEventsModifiedOutsideEditor={onSceneEventsModifiedOutsideEditor}
+        onInstancesModifiedOutsideEditor={onInstancesModifiedOutsideEditor}
+        onObjectsModifiedOutsideEditor={onObjectsModifiedOutsideEditor}
+        onObjectGroupsModifiedOutsideEditor={onObjectGroupsModifiedOutsideEditor}
+        onExtensionInstalled={onExtensionInstalled}
       />
       {!!renderMainMenu &&
         renderMainMenu(

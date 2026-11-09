@@ -61,6 +61,7 @@ import { type FileMetadata } from '../../ProjectsStorage';
 import Stop from '../../UI/CustomSvgIcons/Stop';
 import { subscribeAiStatus, type AiStatusEvent } from '../MultiAiOrchestrator';
 import AiTeamPanel from './AiTeamPanel';
+import { AgentBridgePanel } from '../../AgentBridge';
 
 const TOO_MANY_USER_MESSAGES_WARNING_COUNT = 15;
 const TOO_MANY_USER_MESSAGES_ERROR_COUNT = 20;
@@ -1111,6 +1112,7 @@ export const AiRequestChat: React.ComponentType<{
           [classes.aiRequestChatContainer]: true,
         })}
       >
+        {!standAloneForm && <AgentBridgePanel />}
         {!standAloneForm && <AiTeamPanel />}
         <ScrollView
           ref={scrollViewRef}
