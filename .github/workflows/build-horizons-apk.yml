@@ -195,27 +195,27 @@ jobs:
           body: |
             ## Horizons V.0.2.7 APK
 
-Install: download `Horizons-v0.2.7.apk` on your Android device and open it (allow "install from unknown sources").
+            Install: download `Horizons-v0.2.7.apk` on your Android device and open it (allow "install from unknown sources").
 
-### The AI can finally write events, code and extensions
+            ### The AI can finally write events, code and extensions
 
-Three independent bugs were blocking every attempt — all fixed:
+            Three independent bugs were blocking every attempt — all fixed:
 
-1. **The fatal format bug**: the AI was instructed to return its events wrapped as `{"events": [...]}` — but the engine reads that shape as an EMPTY list. Every event the AI generated was silently thrown away, so it retried in a different format, failed again, and burned your requests. The apply pipeline now accepts every shape and the guide asks for the right one.
-2. **The AI was blind to your project**: the "project digest" it received parsed wrong keys, so it saw NO scenes, NO objects, NO variables — it literally knew nothing about your game. It now sees the full structure: scenes, objects (with behaviors and animations), variables, layers and what is placed where.
-3. **Guessed instruction names**: the AI invented instructions ("ParticleSystem might have bullet functionality…"). It now receives the **real list of available conditions/actions** — exact names, exact parameter counts — enumerated live from the engine, filtered to YOUR project's objects and behaviors. If it still uses an unknown instruction, it gets told the closest real one and fixes it in a single retry.
+            1. **The fatal format bug**: the AI was instructed to return its events wrapped as `{"events": [...]}` — but the engine reads that shape as an EMPTY list. Every event the AI generated was silently thrown away, so it retried in a different format, failed again, and burned your requests. The apply pipeline now accepts every shape and the guide asks for the right one.
+            2. **The AI was blind to your project**: the "project digest" it received parsed wrong keys, so it saw NO scenes, NO objects, NO variables — it literally knew nothing about your game. It now sees the full structure: scenes, objects (with behaviors and animations), variables, layers and what is placed where.
+            3. **Guessed instruction names**: the AI invented instructions ("ParticleSystem might have bullet functionality…"). It now receives the **real list of available conditions/actions** — exact names, exact parameter counts — enumerated live from the engine, filtered to YOUR project's objects and behaviors. If it still uses an unknown instruction, it gets told the closest real one and fixes it in a single retry.
 
-### Real teamwork — Gemini participates on every request
+            ### Real teamwork — Gemini participates on every request
 
-- While GLM builds, Gemini researches an implementation plan in parallel (its notes are injected into the builder's work).
-- When GLM finishes, **Gemini reviews the result** against your request and its verdict appears in the chat and the team channel.
+            - While GLM builds, Gemini researches an implementation plan in parallel (its notes are injected into the builder's work).
+            - When GLM finishes, **Gemini reviews the result** against your request and its verdict appears in the chat and the team channel.
 
-### Your requests last longer
+            ### Your requests last longer
 
-- Events now apply on the first attempt (no more retry storms).
-- The AI batches independent tool calls and is capped at 14 tool calls per request, then wraps up with a summary — protecting your free-tier limits.
+            - Events now apply on the first attempt (no more retry storms).
+            - The AI batches independent tool calls and is capped at 14 tool calls per request, then wraps up with a summary — protecting your free-tier limits.
 
-### Setup (BYOK — bring your own keys)
+            ### Setup (BYOK — bring your own keys)
 
             1. Get free keys: [Z.ai](https://z.ai) (GLM 4.7 Flash — free) and [Google AI Studio](https://aistudio.google.com) (Gemini Flash — free tier)
             2. In the app: Preferences → AI Provider → paste your GLM key **and** your Gemini key (Multi-AI Team) — that's what unlocks the parallel team
