@@ -244,6 +244,36 @@ const getEventWhileConditions = (
   return null;
 };
 
+/**
+ * Normalize the JSON parsed from a "generatedEvents" string into a plain
+ * array of events, as expected by gd.EventsList.unserializeFrom.
+ *
+ * CRITICAL: gd.Serializer.fromJSObject only maps a JS ARRAY to an array
+ * SerializerElement (children with empty names). An object like
+ * { "events": [...] } produces a single child named "events", which
+ * EventsListSerialization::UnserializeEventsFrom (ConsiderAsArrayOf("event"))
+ * counts as ZERO events — silently dropping everything the model generated.
+ * Models routinely wrap the array (following older guides) — unwrap every
+ * known wrapper shape here instead of losing the generated events.
+ */
+export const normalizeGeneratedEventsContent = (parsed: any): any => {
+  if (Array.isArray(parsed)) return parsed;
+  if (parsed && typeof parsed === 'object') {
+    // { "events": [ ... ] } / { "event": [ ... ] } / { "events": { "event": [ ... ] } }
+    for (const key of ['events', 'event', 'Event', 'Events']) {
+      const inner = parsed[key];
+      if (Array.isArray(inner)) return inner;
+      if (inner && typeof inner === 'object') {
+        for (const innerKey of ['events', 'event', 'Event', 'Events']) {
+          const innerArray = inner[innerKey];
+          if (Array.isArray(innerArray)) return innerArray;
+        }
+      }
+    }
+  }
+  return parsed;
+};
+
 const comparePathsReverseLexicographically = (
   p1: EventPath,
   p2: EventPath
@@ -334,7 +364,9 @@ export const applyEventsChanges = (
       }
 
       if (generatedEvents && operationName !== 'delete_event') {
-        const eventsListContent = JSON.parse(generatedEvents);
+        const eventsListContent = normalizeGeneratedEventsContent(
+          JSON.parse(generatedEvents)
+        );
         localEventsToInsert = new gd.EventsList();
         unserializeFromJSObject(
           localEventsToInsert,

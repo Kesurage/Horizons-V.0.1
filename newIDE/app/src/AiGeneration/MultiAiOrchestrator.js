@@ -1095,9 +1095,12 @@ const researchSessions: { [string]: ResearchSession } = {};
 const RESEARCHER_SYSTEM_PROMPT = `You are the researcher/designer of a two-AI team building a GDevelop game.
 The builder AI (another model) is implementing the user's request WITH tools in parallel —
 you cannot modify the project. Your job is to make the result better:
-1. Asset & UX suggestions (objects to add, visual style, menu/feedback ideas).
-2. Gameplay polish (difficulty curve, juice: sounds, particles, screen effects).
-3. Pitfalls the builder should avoid (common GDevelop mistakes, event logic traps).
+1. IMPLEMENTATION PLAN: the exact objects/variables/instructions the builder should use
+   (GDevelop terms: e.g. "condition Collision Player↔Coin, action Delete Coin"),
+   with correct object names taken from the project context.
+2. Asset & UX suggestions (objects to add, visual style, menu/feedback ideas).
+3. Gameplay polish (difficulty curve, juice: sounds, particles, screen effects).
+4. Pitfalls the builder should avoid (common GDevelop mistakes, event logic traps).
 Be CONCRETE and brief: max ~150 words, plain bullet points, no preamble.`;
 
 /** Can the team run parallel research right now? (specialist configured) */
@@ -1334,6 +1337,87 @@ export const askSpecialist = async ({
     return `[SPECIALIST UNAVAILABLE] The specialist AI could not be reached: ${(error &&
       error.message) ||
       'unknown error'}. Continue with your own knowledge and tell the user the specialist was unavailable.`;
+  }
+};
+
+/**
+ * POST-BUILD REVIEW by the specialist (second team member).
+ *
+ * Makes the team effort real and visible: after the builder (primary, e.g.
+ * GLM) has finished its answer, the specialist (e.g. Gemini) reviews what
+ * was done against the user's request — did it cover everything, what
+ * should be checked in preview, what to ask for next. Runs on the
+ * specialist's OWN rate window, so it never steals the builder's quota.
+ * Best-effort: a busy specialist is skipped silently.
+ */
+export const reviewBySpecialist = async ({
+  userPrompt,
+  builderAnswer,
+  projectDigest,
+}: {|
+  userPrompt: string,
+  builderAnswer: string,
+  projectDigest?: ?string,
+|}): Promise<?{| text: string, providerLabel: string |}> => {
+  const specialist = getProviderSlots().find(
+    slot => slot.role === 'specialist' && isSlotUsable(slot)
+  );
+  if (!specialist) return null;
+
+  emitAiStatus({
+    kind: 'team-parallel',
+    slotId: specialist.id,
+    label: specialist.label,
+    message: `${specialist.label} is reviewing the builder's work…`,
+    timestamp: Date.now(),
+  });
+
+  const userContent = [
+    `# USER REQUEST
+${(userPrompt || '').slice(0, 4000)}`,
+    `# BUILDER'S FINAL REPORT (what the other AI just did)
+${(builderAnswer || '').slice(0, 6000)}`,
+    projectDigest
+      ? `# PROJECT CONTEXT (truncated)\n${projectDigest.slice(0, 8000)}`
+      : '',
+  ]
+    .filter(Boolean)
+    .join('\n');
+
+  try {
+    const data = await callSlotChatCompletions({
+      slot: specialist,
+      messages: [
+        {
+          role: 'system',
+          content:
+            'You are the reviewer of a two-AI team building a GDevelop game. ' +
+            'The builder AI just finished implementing the user\'s request and reported ' +
+            'what it did. Review its report against the user request. Answer in at most ' +
+            '80 words, plain text: (1) a one-line verdict — COMPLETE, MOSTLY COMPLETE ' +
+            'or INCOMPLETE (with what is missing); (2) one thing to verify in the game ' +
+            'preview; (3) optionally the best next step for the user. Be honest and specific, ' +
+            'no preamble.',
+        },
+        { role: 'user', content: userContent },
+      ],
+      tools: null,
+      temperature: 0.4,
+    });
+    const choice = data && data.choices && data.choices[0];
+    const text = ((choice && choice.message && choice.message.content) || '').trim();
+    if (!text) return null;
+    emitAiStatus({
+      kind: 'team-parallel',
+      slotId: specialist.id,
+      label: specialist.label,
+      message: `${specialist.label} review delivered: "${text.slice(0, 160)}"`,
+      timestamp: Date.now(),
+    });
+    return { text, providerLabel: specialist.label };
+  } catch (ignored) {
+    // Review is best-effort: never break the builder's answer.
+    return null;
   }
 };
 

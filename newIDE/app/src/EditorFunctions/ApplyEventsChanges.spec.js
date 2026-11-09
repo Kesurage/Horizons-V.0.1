@@ -2,6 +2,7 @@
 import {
   applyEventsChanges,
   addMissingObjectBehaviors,
+  normalizeGeneratedEventsContent,
 } from './ApplyEventsChanges';
 import { type AiGeneratedEventChange } from '../Utils/GDevelopServices/Generation';
 import {
@@ -731,6 +732,79 @@ describe('applyEventsChanges', () => {
     ]);
     expect(result.applied).toBe(1);
     expect(result.errors).toEqual([]);
+  });
+
+  // Regression: models routinely wrap the events array in an object
+  // ({"events": [...]}) — gd.Serializer.fromJSObject maps that to a single
+  // child named "events" which unserializeFrom reads as ZERO events, so
+  // everything the model generated was silently dropped.
+  it('should unwrap {"events":[...]} wrapped generatedEvents and still apply them', () => {
+    setupInitialSceneEvents(['BuiltinCommonInstructions::Standard']);
+    const wrappedEventsJson = `{"events": ${newEventsForInsertionJson.trim()}}`;
+    const eventOperations: Array<AiGeneratedEventChange> = [
+      {
+        operationName: 'insert_at_end',
+        operationTargetEvent: null,
+        generatedEvents: wrappedEventsJson,
+        isEventsJsonValid: true,
+        areEventsValid: true,
+        diagnosticLines: [],
+        extensionNames: [],
+        undeclaredVariables: [],
+        undeclaredObjectVariables: {},
+        missingObjectBehaviors: {},
+        missingResources: [],
+      },
+    ];
+    const result = applyEventsChanges(
+      project,
+      sceneEventsList,
+      eventOperations,
+      fakeGeneratedEventId
+    );
+    // Expected: the two wrapped events must actually be applied (S0, NewS, NewS).
+    expect(sceneEventsList.getEventsCount()).toBe(3);
+    expect(result.applied).toBe(1);
+    expect(result.errors).toEqual([]);
+  });
+
+  it('should unwrap {"events":{"event":[...]}} nested wrapping too', () => {
+    setupInitialSceneEvents([]);
+    const nestedWrappedJson = `{"events": {"event": ${newEventsForInsertionJson.trim()}}}`;
+    const eventOperations: Array<AiGeneratedEventChange> = [
+      {
+        operationName: 'insert_at_end',
+        operationTargetEvent: null,
+        generatedEvents: nestedWrappedJson,
+        isEventsJsonValid: true,
+        areEventsValid: true,
+        diagnosticLines: [],
+        extensionNames: [],
+        undeclaredVariables: [],
+        undeclaredObjectVariables: {},
+        missingObjectBehaviors: {},
+        missingResources: [],
+      },
+    ];
+    const result = applyEventsChanges(
+      project,
+      sceneEventsList,
+      eventOperations,
+      fakeGeneratedEventId
+    );
+    expect(sceneEventsList.getEventsCount()).toBe(2);
+    expect(result.applied).toBe(1);
+    expect(result.errors).toEqual([]);
+  });
+
+  it('should normalizeGeneratedEventsContent pass through plain arrays', () => {
+    expect(normalizeGeneratedEventsContent([1, 2])).toEqual([1, 2]);
+    expect(normalizeGeneratedEventsContent({ events: [1] })).toEqual([1]);
+    expect(normalizeGeneratedEventsContent({ event: [1, 2] })).toEqual([1, 2]);
+    expect(normalizeGeneratedEventsContent({ unrelated: true })).toEqual({
+      unrelated: true,
+    });
+    expect(normalizeGeneratedEventsContent('text')).toEqual('text');
   });
 
   it('should append events if path targets end of list', () => {

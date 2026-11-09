@@ -707,6 +707,30 @@ export const addMessageToAiRequest = async (
       fullOutput
     );
 
+    // Free-tier protection: count the tool calls already used by this
+    // request — past the cap, force the model to wrap up with a summary
+    // instead of looping forever (each turn = 1 provider request).
+    const MAX_TOOL_CALLS_PER_REQUEST = 14;
+    const usedToolCallCount = (fullOutput || []).reduce(
+      (count: number, message: any) => {
+        if (
+          message &&
+          message.type === 'message' &&
+          message.role === 'assistant' &&
+          Array.isArray(message.content)
+        ) {
+          return (
+            count +
+            message.content.filter(
+              (item: any) => item && item.type === 'function_call'
+            ).length
+          );
+        }
+        return count;
+      },
+      0
+    );
+
     const { messages: assistantMessages, providerLabel, model } =
       await runUniversalAiTurn({
         config,
@@ -717,6 +741,9 @@ export const addMessageToAiRequest = async (
         teamSessionId: aiRequestId,
         projectDigest,
         researchPrompt: userMessage || null,
+        forceFinalAnswer:
+          usedToolCallCount >= MAX_TOOL_CALLS_PER_REQUEST &&
+          effectiveMode !== 'chat',
       });
 
     // Stamp the provider that answered (UI badge in the chat).

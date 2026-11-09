@@ -12,6 +12,7 @@ import {
   getTeamResearchNotes,
   injectResearchNotesIntoMessages,
   isTeamResearchAvailable,
+  reviewBySpecialist,
 } from './MultiAiOrchestrator';
 import { DEFAULT_AI_SYSTEM_PROMPT } from './UniversalAiClient';
 
@@ -40,124 +41,146 @@ export const buildProjectDigest = (
     const project = JSON.parse(simplifiedProjectJson);
     const lines: Array<string> = [];
 
-    // Project properties
+    // The SimplifiedProject shape (EditorFunctions/SimplifiedProject) is:
+    // { properties: {gameResolutionWidth, gameResolutionHeight},
+    //   globalObjects: [{objectName, objectType, behaviors, objectVariables, animationNames}],
+    //   globalObjectGroups: [...],
+    //   scenes: [{sceneName, objects, objectGroups, sceneVariables, layers, instancesOnSceneDescription}],
+    //   globalVariables: [{variableName, type, ...}] }
+    // (older/legacy shapes are still handled as a fallback.)
+    const projectProperties = project.properties || {};
+    const gameResolutionSize =
+      projectProperties.gameResolutionWidth && projectProperties.gameResolutionHeight
+        ? `${projectProperties.gameResolutionWidth}x${projectProperties.gameResolutionHeight}`
+        : Array.isArray(projectProperties.gameResolutionSize)
+        ? `${projectProperties.gameResolutionSize[0]}x${projectProperties.gameResolutionSize[1]}`
+        : '';
     lines.push('# PROJECT');
     const projectName =
       (project.name && (project.name.value || project.name)) || 'Untitled';
-    const description =
-      (project.description &&
-        (project.description.value || project.description)) ||
-      '';
-    const packageName =
-      (project.packageName &&
-        (project.packageName.value || project.packageName)) ||
-      '';
-    const orientation =
-      (project.orientation &&
-        (project.orientation.value || project.orientation)) ||
-      '';
-    const gameResolutionSize =
-      project.properties && project.properties.gameResolutionSize
-        ? `${project.properties.gameResolutionSize[0]}x${
-            project.properties.gameResolutionSize[1]
-          }`
-        : '';
     lines.push(`- Name: ${projectName}`);
-    if (description) lines.push(`- Description: ${description}`);
-    if (packageName) lines.push(`- Package: ${packageName}`);
-    if (orientation) lines.push(`- Orientation: ${orientation}`);
     if (gameResolutionSize) lines.push(`- Resolution: ${gameResolutionSize}`);
+
+    const describeObject = (obj: any) => {
+      const name = obj.objectName || obj.name || '?';
+      const type = obj.objectType || (obj.type && (obj.type.value || obj.type)) || 'unknown';
+      const behaviors = Array.isArray(obj.behaviors)
+        ? obj.behaviors
+            .map(
+              (b: any) =>
+                b.behaviorName ||
+                b.name ||
+                (b.behaviorType || b.type || '?')
+            )
+            .join(', ')
+        : '';
+      const animations = obj.animationNames ? `; animations: ${obj.animationNames}` : '';
+      return `- ${name} (type: ${type}${
+        behaviors ? `, behaviors: ${behaviors}` : ''
+      }${animations})`;
+    };
+
+    const describeVariables = (variables: any): Array<string> => {
+      const output: Array<string> = [];
+      if (!Array.isArray(variables)) return output;
+      variables.forEach((v: any) => {
+        const name = v.variableName || v.name || '?';
+        const type = v.type || 'Number';
+        const children = Array.isArray(v.variableChildren)
+          ? ` (${v.variableChildren.length} children)`
+          : '';
+        const value =
+          v.variableValue !== undefined && v.variableValue !== null
+            ? `: ${v.variableValue}`
+            : '';
+        output.push(`- ${name} (${type}${children})${value}`);
+      });
+      return output;
+    };
 
     // Global objects
     const globalObjects =
-      (project.objects && project.objects.objects) || project.objects || [];
+      project.globalObjects ||
+      (project.objects && project.objects.objects) ||
+      project.objects ||
+      [];
     if (Array.isArray(globalObjects) && globalObjects.length > 0) {
       lines.push('', '# GLOBAL OBJECTS');
-      globalObjects.forEach(obj => {
-        const type = (obj.type && (obj.type.value || obj.type)) || 'unknown';
-        lines.push(
-          `- ${obj.name || '?'} (type: ${type}${
-            obj.behaviors && obj.behaviors.length
-              ? `, behaviors: ${obj.behaviors
-                  .map(b => b.name || b.type || '?')
-                  .join(', ')}`
-              : ''
-          })`
-        );
-      });
+      globalObjects.forEach((obj: any) => lines.push(describeObject(obj)));
     }
 
     // Global variables
     const globalVariables =
+      project.globalVariables ||
       (project.variables && project.variables.variables) ||
       project.variables ||
       [];
-    if (Array.isArray(globalVariables) && globalVariables.length > 0) {
-      lines.push('', '# GLOBAL VARIABLES');
-      globalVariables.forEach(v => {
-        lines.push(
-          `- ${v.name || '?'} (${v.type || 'number'}): ${JSON.stringify(
-            v.value ?? ''
-          )}`
-        );
-      });
+    const globalVariableLines = describeVariables(globalVariables);
+    if (globalVariableLines.length > 0) {
+      lines.push('', '# GLOBAL VARIABLES', ...globalVariableLines);
     }
 
     // Scenes
     const layouts =
-      (project.layouts && project.layouts.layouts) || project.layouts || [];
+      project.scenes ||
+      (project.layouts && project.layouts.layouts) ||
+      project.layouts ||
+      [];
     if (Array.isArray(layouts)) {
-      layouts.forEach(layout => {
-        lines.push('', `# SCENE: ${layout.name || '?'}`);
-        if (layout.description)
-          lines.push(`- Description: ${layout.description}`);
+      layouts.forEach((scene: any) => {
+        const sceneName = scene.sceneName || scene.name || '?';
+        lines.push('', `# SCENE: ${sceneName}`);
+
         const objects =
-          (layout.objects && layout.objects.objects) || layout.objects || [];
+          scene.objects && scene.objects.objects
+            ? scene.objects.objects // legacy nested shape
+            : scene.objects || [];
         if (Array.isArray(objects) && objects.length > 0) {
           lines.push('## Objects');
-          objects.forEach(obj => {
-            const type =
-              (obj.type && (obj.type.value || obj.type)) || 'unknown';
-            lines.push(
-              `- ${obj.name || '?'} (type: ${type}${
-                obj.behaviors && obj.behaviors.length
-                  ? `, behaviors: ${obj.behaviors
-                      .map(b => b.name || b.type || '?')
-                      .join(', ')}`
-                  : ''
-              })`
-            );
-          });
+          objects.forEach((obj: any) => lines.push(describeObject(obj)));
         }
-        const variables =
-          (layout.variables && layout.variables.variables) ||
-          layout.variables ||
+
+        const sceneVariables =
+          scene.sceneVariables ||
+          (scene.variables && scene.variables.variables) ||
+          scene.variables ||
           [];
-        if (Array.isArray(variables) && variables.length > 0) {
-          lines.push('## Scene variables');
-          variables.forEach(v => {
-            lines.push(
-              `- ${v.name || '?'} (${v.type || 'number'}): ${JSON.stringify(
-                v.value ?? ''
-              )}`
-            );
-          });
+        const sceneVariableLines = describeVariables(sceneVariables);
+        if (sceneVariableLines.length > 0) {
+          lines.push('## Scene variables', ...sceneVariableLines);
         }
-        const instances =
-          (layout.instances && layout.instances.instances) ||
-          layout.instances ||
-          [];
-        if (Array.isArray(instances) && instances.length > 0) {
-          lines.push(`## Instances (${instances.length} placed)`);
-          const byObject: { [string]: number } = {};
-          instances.forEach(inst => {
-            const key = inst.name || inst.i || '?';
-            byObject[key] = (byObject[key] || 0) + 1;
-          });
-          Object.keys(byObject).forEach(objectName => {
-            lines.push(`- ${objectName}: x${byObject[objectName]}`);
-          });
+
+        if (Array.isArray(scene.layers) && scene.layers.length > 0) {
+          const layerNames = scene.layers
+            .map((layer: any) => layer.layerName || layer.name || '(base)')
+            .join(', ');
+          lines.push(`## Layers: ${layerNames}`);
         }
+
+        if (
+          scene.instancesOnSceneDescription &&
+          typeof scene.instancesOnSceneDescription === 'string'
+        ) {
+          lines.push('## Instances');
+          lines.push(scene.instancesOnSceneDescription);
+        } else {
+          const instances =
+            (scene.instances && scene.instances.instances) ||
+            scene.instances ||
+            [];
+          if (Array.isArray(instances) && instances.length > 0) {
+            const byObject: { [string]: number } = {};
+            instances.forEach((inst: any) => {
+              const key = inst.name || inst.i || '?';
+              byObject[key] = (byObject[key] || 0) + 1;
+            });
+            lines.push(`## Instances (${instances.length} placed)`);
+            Object.keys(byObject).forEach(objectName => {
+              lines.push(`- ${objectName}: x${byObject[objectName]}`);
+            });
+          }
+        }
+
         // Events summary: count by type so the AI knows what logic exists.
         const countEvents = (events: any): number => {
           if (!events) return 0;
@@ -180,11 +203,13 @@ export const buildProjectDigest = (
           return 0;
         };
         const eventsCount = countEvents(
-          layout.events && (layout.events.events || layout.events.e)
-            ? layout.events
-            : layout.events
+          scene.events && (scene.events.events || scene.events.e)
+            ? scene.events
+            : scene.events
         );
-        lines.push(`## Events: ${eventsCount} event(s) in this scene`);
+        lines.push(
+          `## Events: ${eventsCount} event(s) — use read_scene_events to browse them before editing.`
+        );
       });
     }
 
@@ -811,11 +836,11 @@ You are an autonomous agent working INSIDE the GDevelop/Horizons game editor.
 You modify the actual game project by calling functions (tools).
 Rules:
 - ALWAYS inspect before you change: use inspect_* / describe_instances / read_scene_events to know the current state.
-- Make changes with the provided tools. One tool call at a time, in a logical order.
-- Use add_scene_events to create game logic: give a precise, self-contained description of conditions and actions (mention exact object names, variable names, and values).
-- You lead a small AI TEAM: you are the primary agent. For media analysis, deep analysis or a second opinion, delegate with ask_specialist. For up-to-date knowledge, use web_search. Prefer solving yourself; delegate only when it truly helps.
-- After finishing your changes, ALWAYS reply with a short summary of what you did in markdown, so the user can review.
-- If a tool call fails, read the error and adapt (wrong argument, missing scene, wrong behavior type...), then retry differently.
+- Make changes with the provided tools. Batch INDEPENDENT tool calls in the same reply (several calls at once) — the user's providers are on limited free tiers, every extra round-trip costs a request.
+- Use add_scene_events to create game logic: give a precise, self-contained description of conditions and actions (mention exact object names, variable names, and values). The description is compiled by a second call that receives the REAL list of valid instructions — you do not need to write raw event JSON yourself.
+- You lead a small AI TEAM: you are the builder (primary). A researcher AI (e.g. Gemini) works IN PARALLEL on every user request — its notes appear in your context as "TEAM RESEARCH NOTES": read them and use the implementation plan. For media analysis, deep analysis or a second opinion, delegate with ask_specialist. For up-to-date knowledge, use web_search.
+- After finishing your changes, ALWAYS reply with a short summary of what you did in markdown, so the user can review. The researcher will review your summary too.
+- If a tool call fails, read the attached error/diagnostics CAREFULLY — they name the exact invalid instruction names or paths — and fix them in ONE corrected retry. Do not retry more than twice with the same approach; prefer a simpler approach that is certain to work (simple builtin instructions or a JavaScript code event).
 - If the user asks a question without requesting changes, just answer — do not call tools.
 - Never invent object names, scenes, variables or behaviors: check the project context first.
 - Behavior type names use the full form, e.g. "PlatformerObjectBehavior", "Physics2::Physics2Behavior", "TopDownMovementBehavior", "DraggableBehavior".
@@ -903,7 +928,9 @@ export const getUniversalAiSystemPrompt = ({
  */
 export const EVENTS_JSON_GUIDE = `
 GDevelop events must be returned as serialized events JSON.
-A events list is: { "events": [ <event>, ... ] }
+An events list is a PLAIN JSON ARRAY: [ <event>, ... ]
+IMPORTANT: do NOT wrap it in an object like {"events": ...} — the apply
+pipeline needs a bare array as the top level of "generatedEvents".
 A standard event is:
 {
   "type": "BuiltinCommonInstructions::Standard",
@@ -925,13 +952,17 @@ A standard event is:
   ],
   "events": []
 }
-The FIRST parameter is always the scene name — use an empty string "".
-Object names are then passed as parameters (e.g. "Player", "Coin").
+"type" of an event is a plain string. "type" of a condition/action can be
+{"value": "<name>"} or "<name>" — both are accepted.
+Parameter arrays MUST have EXACTLY the parameter count shown for that
+instruction in the REAL INSTRUCTIONS list provided — including the leading
+automatic parameters (usually "" for the scene / objects context).
+Object names are passed as string parameters (e.g. "Player", "Coin").
 Expressions are passed as string parameters (e.g. "Score + 1", "Player.X()").
-Common builtin instruction types (value field):
-- Conditions: "Collision", "Distance", "AtPosition", "KeyReleased", "IsKeyPressed", "CursorOnObject", "Timer", "SceneJustBegins", "VariableCompare", "ObjectVariableCompare", " Always" (use "BuiltinCommonInstructions::Standard" with no condition for always), "AnimationFrame", "PosX", "PosY", "NumberProperties"...
-- Actions: "Create", "Delete", "SetPosition", "AddForceXY", "SetAngle", "ChangeAnimation", "ChangeText", "ChangeVarScene", "AddVarScene", "ChangeObjectVariable", "AddObjectVariable", "ResetTimer", "PauseTimer", "PlaySound", "PlayMusic", "PlaySoundCanal", "Scene", "Quit", "SetSceneVariable", "SetObjectVariable"... plus every behavior action like "SetPropertyOfPlatformerObject", "SetGravityOfPhysics2"...
-Common condition/action type names must be the FULL name of the instruction as registered by its extension (e.g. "BuiltinCommonInstructions::Standard" for the event type itself; instructions are identified by short names like "Collision", "Create", "Delete", "SetPosition"...). If unsure, prefer simple builtin instructions.
+CRITICAL: use ONLY instruction names that appear in the REAL INSTRUCTIONS
+list of this prompt — a name that is not listed will be REJECTED. If
+something is not expressible with the listed instructions, either combine
+simpler instructions or use a JavaScript code event.
 Other event types: "BuiltinCommonInstructions::ForEach" (parameters: ["", "Object"]), "BuiltinCommonInstructions::Repeat" (parameters: ["", "timesExpression"]), "BuiltinCommonInstructions::While", "BuiltinCommonInstructions::Comment" (parameters: ["", "comment text", ""]), "BuiltinCommonInstructions::Group".
 A JavaScript code event is:
 {
@@ -953,16 +984,20 @@ Return STRICT JSON (no markdown fence) of the shape:
     {
       "operationName": "insert_at_end",
       "operationTargetEvent": null,
-      "generatedEvents": "{ \\"events\\": [ ... ] }"
+      "generatedEvents": "[ { ... }, ... ]"
     }
   ]
 }
+"generatedEvents" must be a STRING containing a PLAIN JSON ARRAY of events
+(NOT an object like {"events": ...} — a bare array: "[ ... ]").
 operationName is one of:
 - "insert_at_end": append events at the end of the scene events (no target needed).
 - "insert_after_event" / "insert_before_event": insert relative to an existing event.
 - "replace_entire_event_and_sub_events", "replace_event_but_keep_existing_sub_events", "insert_and_replace_event": replace the event at the target path.
 - "delete_event": remove the event at the target path (no generatedEvents needed).
 "operationTargetEvent" is a path string like "event-0" (first event), "event-0.1" (sub-event 1 of event 0).
+Optionally add "extensionNames": ["<extension name>", ...] to a change when the events use
+instructions from an extension that may not be installed yet — the editor installs it automatically.
 When asked to adapt existing events, you may receive the existing events; prefer precise operations over replacing everything.
 `;
 
@@ -1169,6 +1204,7 @@ export const runUniversalAiTurn = async ({
   teamSessionId,
   projectDigest,
   researchPrompt,
+  forceFinalAnswer,
 }: {
   config: UniversalAiConfig,
   systemPrompt: string,
@@ -1181,6 +1217,10 @@ export const runUniversalAiTurn = async ({
   /** Latest user message, used ONLY to trigger parallel team research
    * (not appended to the messages — history already carries it). */
   researchPrompt?: ?string,
+  /** When true, tools are withheld and the model is told to write its
+   * final summary now — used as a hard stop against runaway agent loops
+   * that would burn the user's free-tier requests. */
+  forceFinalAnswer?: boolean,
 }): Promise<{|
   messages: Array<any>,
   /** The provider that produced the final answer (for the UI badge). */
@@ -1200,7 +1240,16 @@ export const runUniversalAiTurn = async ({
     chatMessages.push({ role: 'user', content: newUserPrompt });
   }
 
-  const useTools = mode !== 'chat';
+  const useTools = mode !== 'chat' && !forceFinalAnswer;
+  if (forceFinalAnswer) {
+    chatMessages.push({
+      role: 'system',
+      content:
+        'LIMIT REACHED: this request has already used the maximum number of tool calls for one user request ' +
+        '(protecting the user’s free-tier rate limits). Do NOT call any more tools. Write your final summary ' +
+        'of everything that was done so far right now — including what, if anything, could not be completed.',
+    });
+  }
 
   // --- Parallel team research (agent modes only) -------------------------
   // Kick the researcher off BEFORE the builder request: both models then
@@ -1273,6 +1322,43 @@ export const runUniversalAiTurn = async ({
     const research = await getTeamResearchNotes(sessionId, 12000);
     if (research) {
       finalText = `${finalText}\n\n---\n🔍 **Team researcher (${research.providerLabel}) — worked in parallel while the builder implemented:**\n${research.notes}`;
+    }
+
+    // POST-BUILD REVIEW: the second team member (e.g. Gemini) reviews what
+    // the builder just did, on its OWN rate window. This is what makes the
+    // team effort visible and genuinely useful on every single request.
+    try {
+      // Recover the original user request from the conversation history when
+      // this turn was triggered by tool outputs (no new user prompt).
+      const lastUserMessage = (historyOutput || [])
+        .filter(
+          (message: any) =>
+            message &&
+            message.type === 'message' &&
+            message.role === 'user'
+        )
+        .map((message: any) => {
+          const content = message.content || [];
+          return Array.isArray(content)
+            ? content
+                .map((c: any) => c.text || '')
+                .filter(Boolean)
+                .join(' ')
+            : String(content);
+        })
+        .filter(Boolean)
+        .pop();
+      const review = await reviewBySpecialist({
+        userPrompt:
+          researchTrigger || newUserPrompt || lastUserMessage || '',
+        builderAnswer: finalText,
+        projectDigest: projectDigest || null,
+      });
+      if (review && review.text) {
+        finalText = `${finalText}\n\n---\n✅ **Team review (${review.providerLabel}):** ${review.text}`;
+      }
+    } catch (ignored) {
+      // The review is strictly best-effort.
     }
   }
 

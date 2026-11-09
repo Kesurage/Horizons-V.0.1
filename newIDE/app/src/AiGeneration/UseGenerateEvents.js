@@ -8,6 +8,11 @@ import {
   EVENTS_JSON_GUIDE,
   EVENTS_OPERATIONS_GUIDE,
 } from './UniversalAiAgent';
+import {
+  buildInstructionCheatsheet,
+  validateEventsAgainstMetadata,
+} from './InstructionCheatsheet';
+import { normalizeGeneratedEventsContent } from '../EditorFunctions/ApplyEventsChanges';
 import { type EventsGenerationResult } from '../EditorFunctions';
 import type { AiGeneratedEvent } from '../Utils/GDevelopServices/Generation';
 
@@ -37,6 +42,57 @@ const extractJson = (text: string): ?Object => {
     }
   }
   return null;
+};
+
+/**
+ * Compact summary of the objects of a scene (name, type, behaviors) so the
+ * compiler always knows exactly which objects exist — even when the calling
+ * agent did not forward an objects list.
+ */
+const buildSceneObjectsSummary = (
+  project: gdProject,
+  sceneName: string
+): string => {
+  try {
+    if (!project.hasLayoutNamed(sceneName)) return '';
+    const scene = project.getLayout(sceneName);
+    const lines: Array<string> = [];
+    const describeObject = (object: gdObject) => {
+      const behaviors: Array<string> = [];
+      const behaviorNames = object.getAllBehaviorNames().toJSArray();
+      behaviorNames.forEach(behaviorName => {
+        const behavior = object.getBehavior(behaviorName);
+        behaviors.push(
+          `${behaviorName} (${behavior.getTypeName()})`
+        );
+      });
+      lines.push(
+        `- ${object.getName()} (type: ${object.getType()}${
+          behaviors.length ? `, behaviors: ${behaviors.join(', ')}` : ''
+        })`
+      );
+    };
+    const globalObjects = project.getObjects();
+    mapFor(0, globalObjects.getObjectsCount(), i => {
+      describeObject(globalObjects.getObjectAt(i));
+    });
+    const sceneObjects = scene.getObjects();
+    mapFor(0, sceneObjects.getObjectsCount(), i => {
+      describeObject(sceneObjects.getObjectAt(i));
+    });
+    return lines.join('\n');
+  } catch (ignored) {
+    return '';
+  }
+};
+
+// Local mapFor to avoid importing Utils just for this.
+const mapFor = (start: number, end: number, callback: number => any) => {
+  const result = [];
+  for (let i = start; i < end; i++) {
+    result.push(callback(i));
+  }
+  return result;
 };
 
 /**
@@ -85,6 +141,20 @@ export const useGenerateEvents = ({
           projectSpecificExtensionsSummaryJson
         );
 
+        // REAL instructions of the engine (exact names + parameter counts),
+        // filtered to the extensions/objects/behaviors of this project.
+        const instructionCheatsheet = buildInstructionCheatsheet({
+          simplifiedProjectJson,
+          eventsDescription,
+          extensionNamesList,
+        });
+
+        // The scene's objects — the compiler must never invent object names.
+        const sceneObjectsSummary = buildSceneObjectsSummary(
+          project,
+          sceneName
+        );
+
         const compilerPrompt = [
           'Compile the following game logic request into GDevelop serialized events JSON operations.',
           '',
@@ -97,15 +167,20 @@ export const useGenerateEvents = ({
           '# REQUESTED LOGIC',
           eventsDescription,
           '',
+          sceneObjectsSummary
+            ? '# OBJECTS THAT EXIST IN THIS SCENE (use only these names)\n' +
+              sceneObjectsSummary
+            : '',
           existingEventsAsText
             ? '# EXISTING EVENTS IN THE SCENE (as readable text)\n' +
               existingEventsAsText.slice(0, 8000)
             : '# The scene has no events yet (or none relevant). Use "insert_at_end".',
           '',
           EVENTS_JSON_GUIDE,
+          instructionCheatsheet ? '\n' + instructionCheatsheet : '',
           EVENTS_OPERATIONS_GUIDE,
         ]
-          .filter(Boolean)
+          .filter(part => part !== '')
           .join('\n');
 
         // Chat-style call on purpose: the strict JSON contract is enforced by
@@ -186,21 +261,46 @@ export const useGenerateEvents = ({
           status: 'ready',
           error: null,
           resultMessage: parsedResult.resultMessage || null,
-          changes: parsedResult.changes.map(change => ({
-            operationName: change.operationName || 'insert_at_end',
-            operationTargetEvent: change.operationTargetEvent || null,
-            isEventsJsonValid: change.generatedEvents
-              ? typeof change.generatedEvents === 'string'
-              : null,
-            generatedEvents: change.generatedEvents || null,
-            areEventsValid: null,
-            extensionNames: change.extensionNames || null,
-            diagnosticLines: [],
-            undeclaredVariables: [],
-            undeclaredObjectVariables: {},
-            missingObjectBehaviors: {},
-            missingResources: [],
-          })),
+          changes: parsedResult.changes.map(change => {
+            // Normalize the shape the model may still wrap ("{"events":[...]}")
+            // into the plain array the apply pipeline needs, then validate
+            // against the REAL engine metadata so the agent gets precise
+            // feedback instead of silently-broken events.
+            let generatedEvents: ?string = change.generatedEvents || null;
+            let diagnosticLines: Array<string> = [];
+            if (generatedEvents && typeof generatedEvents === 'string') {
+              try {
+                const parsedEvents = JSON.parse(generatedEvents);
+                const normalized = normalizeGeneratedEventsContent(
+                  parsedEvents
+                );
+                if (normalized !== parsedEvents) {
+                  generatedEvents = JSON.stringify(normalized);
+                }
+                if (Array.isArray(normalized)) {
+                  diagnosticLines = validateEventsAgainstMetadata(normalized);
+                }
+              } catch (ignored) {
+                // JSON errors are handled by the apply pipeline — and it
+                // reports them precisely.
+              }
+            }
+            return {
+              operationName: change.operationName || 'insert_at_end',
+              operationTargetEvent: change.operationTargetEvent || null,
+              isEventsJsonValid: change.generatedEvents
+                ? typeof change.generatedEvents === 'string'
+                : null,
+              generatedEvents,
+              areEventsValid: diagnosticLines.length === 0 ? null : false,
+              extensionNames: change.extensionNames || null,
+              diagnosticLines,
+              undeclaredVariables: [],
+              undeclaredObjectVariables: {},
+              missingObjectBehaviors: {},
+              missingResources: [],
+            };
+          }),
         }: any);
 
         return { generationCompleted: true, aiGeneratedEvent };
