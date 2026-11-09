@@ -177,50 +177,52 @@ jobs:
       - name: Rename APK
         run: |
           mkdir -p release
-          cp capacitor-app/android/app/build/outputs/apk/release/app-release.apk release/Horizons-v0.2.6.apk
+          cp capacitor-app/android/app/build/outputs/apk/release/app-release.apk release/Horizons-v0.2.7.apk
           ls -la release/
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: horizons-apk
-          path: release/Horizons-v0.2.6.apk
+          path: release/Horizons-v0.2.7.apk
           retention-days: 30
 
       - name: Publish to GitHub Releases
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.2.6
-          name: Horizons V.0.2.6 — Yarn keyboard fixed, working previews, compact AI panel
+          tag_name: v0.2.7
+          name: Horizons V.0.2.7 — the AI can write events, real instruction knowledge, visible teamwork
           body: |
-            ## Horizons V.0.2.6 APK
+            ## Horizons V.0.2.7 APK
 
-            Install: download `Horizons-v0.2.6.apk` on your Android device and open it (allow "install from unknown sources").
+Install: download `Horizons-v0.2.7.apk` on your Android device and open it (allow "install from unknown sources").
 
-            ### The Yarn dialogue editor keyboard now works
+### The AI can finally write events, code and extensions
 
-            Tapping the Yarn editor on Android did nothing — two root causes, both fixed:
+Three independent bugs were blocking every attempt — all fixed:
 
-            - a dialog was **stealing the focus** from the embedded editor every time you tapped inside it, which prevented the Android keyboard from attaching. Focus traps are now disabled in the app shell, and the screen **resizes when the keyboard opens** (inputs stay visible instead of being covered);
-            - the bridge between the app and the editor used `window.opener`, which is null for an embedded editor — so the editor never received your dialogue file and could not send back its changes. It now uses the correct channel: **loading your file, editing it, and Apply/save works end-to-end**.
+1. **The fatal format bug**: the AI was instructed to return its events wrapped as `{"events": [...]}` — but the engine reads that shape as an EMPTY list. Every event the AI generated was silently thrown away, so it retried in a different format, failed again, and burned your requests. The apply pipeline now accepts every shape and the guide asks for the right one.
+2. **The AI was blind to your project**: the "project digest" it received parsed wrong keys, so it saw NO scenes, NO objects, NO variables — it literally knew nothing about your game. It now sees the full structure: scenes, objects (with behaviors and animations), variables, layers and what is placed where.
+3. **Guessed instruction names**: the AI invented instructions ("ParticleSystem might have bullet functionality…"). It now receives the **real list of available conditions/actions** — exact names, exact parameter counts — enumerated live from the engine, filtered to YOUR project's objects and behaviors. If it still uses an unknown instruction, it gets told the closest real one and fixes it in a single retry.
 
-            ### Previews start now (black screen fixed)
+### Real teamwork — Gemini participates on every request
 
-            The preview overlay was built, but the game data was still referenced through service-worker-only URLs — which don't exist in the app shell → black screen. The preview page now rewrites **all** game data, events code and extensions code to in-memory blob URLs, so the preview is truly self-contained (engine from the APK, data from memory — zero network, no service worker).
+- While GLM builds, Gemini researches an implementation plan in parallel (its notes are injected into the builder's work).
+- When GLM finishes, **Gemini reviews the result** against your request and its verdict appears in the chat and the team channel.
 
-            ### Simpler AI panel
+### Your requests last longer
 
-            - The AI Team panel is now **collapsed by default** — the chat gets the screen back. The compact header keeps showing the live status dots (green = ready, orange = working) so you always see both AIs at a glance.
-            - Expanding it shows **only the providers you can actually use** (GLM + Gemini once keys are set); the disabled ones no longer clutter the list.
+- Events now apply on the first attempt (no more retry storms).
+- The AI batches independent tool calls and is capped at 14 tool calls per request, then wraps up with a summary — protecting your free-tier limits.
 
-            ### Setup (BYOK — bring your own keys)
+### Setup (BYOK — bring your own keys)
 
             1. Get free keys: [Z.ai](https://z.ai) (GLM 4.7 Flash — free) and [Google AI Studio](https://aistudio.google.com) (Gemini Flash — free tier)
             2. In the app: Preferences → AI Provider → paste your GLM key **and** your Gemini key (Multi-AI Team) — that's what unlocks the parallel team
             3. Press **Test**. If Z.ai's free servers are momentarily busy, you'll see the automatic retry instead of an error.
           draft: false
           prerelease: false
-          files: release/Horizons-v0.2.6.apk
+          files: release/Horizons-v0.2.7.apk
           fail_on_unmatched_files: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
